@@ -5,6 +5,7 @@
 <title>艾奧傑亞證券交易所</title>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0a0d13">
+<meta name="author" content="@ilainosu.ffxiv（Threads）">
 <meta name="description" content="把 FF14 繁中服陸行鳥 DC 的市場板做成股票看盤 App：大盤指數、類股、K 線、看盤牆、交易紀錄本。資料來源 Universalis。">
 <style>
 :root{
@@ -63,6 +64,7 @@ nav .ng.dragging{background:#1b2230;outline:1px dashed var(--gold);opacity:.9}
 body.nav-dragging,body.nav-dragging *{cursor:grabbing!important;user-select:none}
 nav a{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
 nav .nreset{color:var(--gold);cursor:pointer}
+.maker a,#mfoot a{color:var(--gold)}.maker a:hover,#mfoot a:hover{text-decoration:underline}
 nav .nedit-bar{display:flex;align-items:center;gap:6px;padding:4px 6px 8px;font-size:12px;color:var(--gold)}nav .nedit-bar span{margin-right:auto}
 nav .ng.edit{flex-direction:row;align-items:center;outline:1px dashed #3a4458}
 nav .ng.edit>a:not(:first-child){display:none}nav .ng.edit>a{flex:1}
@@ -17134,7 +17136,7 @@ function renderShell(){
   const L=(h,t,sub)=>`<a href="${h}" class="${sub?'sub ':''}${r===h||(h!=='#/'&&r.startsWith(h))?'on':''}">${t}</a>`;
   renderMbar();
   $('#nav').innerHTML=navHTML(L)+
-    `<div class="foot">${navCustomized()?'<a class="nreset" data-navreset="1">重設選單順序</a><br>':''}資料：Universalis<br>名稱：ffxiv-datamining-tc<br>本站為非官方粉絲作品<br>FINAL FANTASY XIV © SQUARE ENIX<br>${S.cons?'成分股更新於<br>'+new Date(S.cons.t).toLocaleString('zh-TW'):''}</div>`;
+    `<div class="foot">${navCustomized()?'<a class="nreset" data-navreset="1">重設選單順序</a><br>':''}<span class="maker">製作人（Threads）<br><a href="https://www.threads.com/@ilainosu.ffxiv" target="_blank" rel="noopener" title="在 Threads 上追蹤製作人">@ilainosu.ffxiv</a></span><br>資料：Universalis<br>名稱：ffxiv-datamining-tc<br>本站為非官方粉絲作品<br>FINAL FANTASY XIV © SQUARE ENIX<br>${S.cons?'成分股更新於<br>'+new Date(S.cons.t).toLocaleString('zh-TW'):''}</div>`;
   // 手機版：側欄頁尾移到頁面最下方；目前分頁捲到分頁列中間
   {const f=$('#nav .foot');$('#mfoot').innerHTML=f?f.innerHTML.replace(/<br>/g,'・'):''}
   if(matchMedia('(max-width:900px)').matches){const nv=$('#nav'),a=nv.querySelector('a.on');if(a)nv.scrollLeft=a.offsetLeft-nv.clientWidth/2+a.offsetWidth/2}
