@@ -17567,16 +17567,19 @@ document.addEventListener('click',ev=>{
 });
 
 /* ========== 交易紀錄本 ========== */
-// 角色：{id,name,world}；紀錄：{id,charId,itemId,side,price,qty,hq,world,tax,time,note,src}
-S.chars=lsGet('aex_chars',[]);
+// 角色：{id,name,world,rets:[{name,world}]}；紀錄：{id,charId,itemId,side,price,qty,hq,world,tax,time,note,src,ret}
+S.chars=lsGet('aex_chars',[]);S.chars.forEach(c=>{if(!Array.isArray(c.rets))c.rets=[]});
 S.jview=lsGet('aex_jview','all');            // 'all' | charId | 'none'
-S.detect=lsGet('aex_detect',{});             // charId -> {t, found:[...]}
+S.detect=lsGet('aex_detect',{});             // charId -> {t, found:[買入], ts, sold:[賣出]}
+S.rsnap=lsGet('aex_rsnap',{});               // charId -> {t, list:[{itemId,p,q,hq,world,ret,seen}]}：雇員上架快照
 S.ignored=new Set(lsGet('aex_ignored',[]));  // 略過的偵測交易 key
 function saveJournal(){lsSet('aex_journal',S.journal)}
 function saveChars(){lsSet('aex_chars',S.chars)}
 const charOf=id=>S.chars.find(c=>c.id===id);
-const charName=id=>{const c=charOf(id);return c?c.name:'未指定角色'};
-const tradeKey=x=>`${x.itemId}|${x.t}|${x.p}|${x.q}`;
+const charLabel=c=>`${c.name}@${WN[c.world]||'?'}`;   // 角色名稱只在同一伺服器內唯一，顯示時一律帶伺服器
+const charName=id=>{const c=charOf(id);return c?charLabel(c):'未指定角色'};
+const tradeKey=x=>x.side==='sell'?`s|${x.itemId}|${x.t}|${x.p}|${x.q}|${x.world}`:`${x.itemId}|${x.t}|${x.p}|${x.q}`;
+const lc=s=>(s||'').trim().toLowerCase();
 function jRecords(){
   if(S.jview==='all')return S.journal;
   if(S.jview==='none')return S.journal.filter(r=>!charOf(r.charId));
@@ -17592,38 +17595,107 @@ function calcBook(recs){
   return {pos:Object.values(pos),realized,totalBuy,unmatched};
 }
 
-/* 掃描：同一伺服器的角色只掃一次，比對成交紀錄的 buyerName */
+/* 掃描：買入看成交紀錄的 buyerName（全 DC 伺服器，可跨服），賣出看雇員上架是否消失且有對應成交 */
 async function scanChars(chars){
-  const byWorld={};chars.forEach(c=>(byWorld[c.world]=byWorld[c.world]||[]).push(c));
-  const ids=ITEMS.map(it=>it.id);const cs=chunk(ids,100);
-  const worlds=Object.keys(byWorld);let wi=0;
-  for(const w of worlds){
-    wi++;const list=byWorld[w];const names=new Map(list.map(c=>[c.name.trim().toLowerCase(),c]));
-    const found={};list.forEach(c=>found[c.id]=[]);let done=0;
-    showOverlay(`掃描 ${WN[w]} 的成交紀錄${worlds.length>1?`（${wi}/${worlds.length}）`:''}`,`比對角色：${list.map(c=>c.name).join('、')}・近 7 天・全部可交易物品`);
-    await Promise.all(cs.map(async c=>{
-      try{
-        const d=await getJSON(`${API}/v2/history/${w}/${c.join(',')}?entriesToReturn=999&entriesWithin=${7*DAY}`,{persist:false,ttl:0});
-        Object.values(itemsOf(d)).forEach(it=>(it.entries||[]).forEach(x=>{
-          const ch=names.get((x.buyerName||'').trim().toLowerCase());
-          if(ch)found[ch.id].push({itemId:it.itemID,t:x.timestamp,p:x.pricePerUnit,q:x.quantity,hq:!!x.hq,world:+w});
-        }));
-      }catch(e){console.warn('scan char',e)}
-      done++;setProgress(done/cs.length,`${done} / ${cs.length} 批`);
-    }));
-    list.forEach(c=>{S.detect[c.id]={t:Date.now(),found:found[c.id].sort((a,b)=>b.t-a.t)}});
+  try{
+    await scanBuys(chars);
+    const rc=chars.filter(c=>c.rets?.length);
+    if(rc.length)await scanRetainers(rc);
+  }finally{lsSet('aex_detect',S.detect);lsSet('aex_rsnap',S.rsnap);hideOverlay()}
+}
+async function runBatches(tasks,label){
+  let done=0;
+  await Promise.all(tasks.map(async([url,onData,onFail])=>{
+    try{onData(await getJSON(url,{persist:false,ttl:0}))}catch(e){console.warn('scan',e);onFail&&onFail()}
+    done++;setProgress(done/tasks.length,`${label}${done} / ${tasks.length} 批`);
+  }));
+}
+async function scanBuys(chars){
+  // 角色＝名稱＋伺服器。但成交紀錄只有買家名稱、沒有買家所屬伺服器（任何角色都能跨服購買），
+  // 所以登記了同名角色（不同伺服器）時無從判斷是誰買的：這筆會列在每個同名角色底下，標「同名待確認」，由使用者選擇歸屬
+  const names=new Map();chars.forEach(c=>{const k=lc(c.name);names.set(k,[...(names.get(k)||[]),c])});
+  const found={};chars.forEach(c=>found[c.id]=[]);
+  const since=Date.now()/1000-7*DAY;const hot=new Set();
+  const take=(id,x,w)=>{const cs=names.get(lc(x.buyerName));if(!cs)return;const world=w??x.worldID;
+    const amb=cs.length>1;cs.forEach(ch=>found[ch.id].push({itemId:id,t:x.timestamp,p:x.pricePerUnit,q:x.quantity,hq:!!x.hq,world,...(amb?{amb:true}:{})}))};
+  const who=chars.map(charLabel).join('、');
+  showOverlay(`掃描 ${who} 的買入紀錄`,'陸行鳥 DC 全部伺服器・近 7 天・含跨服購買');
+  await runBatches(chunk(ITEMS.map(it=>it.id),100).map(c=>[`${API}/v2/history/${enc(DC)}/${c.join(',')}?entriesToReturn=999&entriesWithin=${7*DAY}`,
+    d=>Object.values(itemsOf(d)).forEach(it=>{const e=it.entries||[];
+      // 熱門物品在 DC 範圍內 999 筆蓋不到 7 天，之後改逐服掃描
+      if(e.length>=999&&e[e.length-1].timestamp>since){hot.add(it.itemID);return}
+      e.forEach(x=>take(it.itemID,x))})]),'');
+  if(hot.size){
+    showOverlay(`掃描 ${who} 的買入紀錄・熱門物品逐服補掃`,`${hot.size} 個成交量大的物品，在 DC 範圍內筆數不夠涵蓋 7 天`);
+    const tasks=[];WORLDS.forEach(([w])=>chunk([...hot],100).forEach(c=>tasks.push([`${API}/v2/history/${w}/${c.join(',')}?entriesToReturn=999&entriesWithin=${7*DAY}`,
+      d=>Object.values(itemsOf(d)).forEach(it=>(it.entries||[]).forEach(x=>take(it.itemID,x,w)))])));
+    await runBatches(tasks,'');
   }
-  lsSet('aex_detect',S.detect);hideOverlay();
+  chars.forEach(c=>{const d=S.detect[c.id]=S.detect[c.id]||{};d.t=Date.now();d.found=found[c.id].sort((a,b)=>b.t-a.t)});
+}
+async function scanRetainers(chars){
+  const rkey=(w,n)=>w+'|'+lc(n);
+  const rmap=new Map();chars.forEach(c=>c.rets.forEach(r=>rmap.set(rkey(r.world,r.name),{c,r})));
+  const cur={};chars.forEach(c=>cur[c.id]=[]);const failed=new Set();
+  const F='items.itemID,items.worldUploadTimes,items.listings.retainerName,items.listings.worldID,items.listings.pricePerUnit,items.listings.quantity,items.listings.hq';
+  showOverlay(`掃描 ${chars.map(charLabel).join('、')} 的雇員上架`,`雇員：${chars.flatMap(c=>c.rets.map(r=>`${r.name}@${WN[r.world]||''}`)).join('、')}`);
+  await runBatches(chunk(ITEMS.map(it=>it.id),100).map(c=>[`${API}/v2/${enc(DC)}/${c.join(',')}?listings=999&entries=0&fields=${F}`,
+    d=>Object.values(itemsOf(d)).forEach(it=>(it.listings||[]).forEach(l=>{const m=rmap.get(rkey(l.worldID,l.retainerName));
+      if(m)cur[m.c.id].push({itemId:it.itemID,p:l.pricePerUnit,q:l.quantity,hq:!!l.hq,world:l.worldID,ret:m.r.name,seen:it.worldUploadTimes?.[l.worldID]||Date.now()})})),
+    ()=>c.forEach(id=>failed.add(id))]),'');
+  // 上次快照有、這次不見的掛單 → 找同服、同價、同量、同品質、在上次看到之後的成交
+  const key=l=>[lc(l.ret),l.world,l.itemId,l.hq?1:0,l.p,l.q].join('|');
+  const gone=[];
+  chars.forEach(c=>{
+    const prev=(S.rsnap[c.id]?.list||[]).filter(l=>rmap.has(rkey(l.world,l.ret)));const now=cur[c.id];
+    const cnt=new Map();now.forEach(l=>cnt.set(key(l),(cnt.get(key(l))||0)+1));
+    prev.forEach(l=>{if(failed.has(l.itemId)){now.push(l);return}const k=key(l),n=cnt.get(k)||0;if(n>0)cnt.set(k,n-1);else gone.push({c,l})});
+  });
+  const sold={};chars.forEach(c=>sold[c.id]=[]);
+  if(gone.length){
+    const ids=[...new Set(gone.map(g=>g.l.itemId))];
+    const within=Math.ceil((Date.now()-Math.min(...gone.map(g=>g.l.seen)))/1000)+3600;
+    const hist={};
+    showOverlay(`比對 ${chars.map(charLabel).join('、')} 的雇員成交`,`${gone.length} 筆掛單已下架，確認是否賣出`);
+    await runBatches(chunk(ids,100).map(c=>[`${API}/v2/history/${enc(DC)}/${c.join(',')}?entriesToReturn=999&entriesWithin=${Math.min(within,30*DAY)}`,
+      d=>Object.values(itemsOf(d)).forEach(it=>hist[it.itemID]=it.entries||[])]),'');
+    const used=new Set();
+    gone.sort((a,b)=>a.l.seen-b.l.seen).forEach(({c,l})=>{
+      const e=(hist[l.itemId]||[]).find(x=>!used.has(x)&&x.worldID===l.world&&!!x.hq===l.hq&&x.pricePerUnit===l.p&&x.quantity===l.q&&x.timestamp*1000>=l.seen-300000);
+      if(e){used.add(e);sold[c.id].push({side:'sell',itemId:l.itemId,t:e.timestamp,p:l.p,q:l.q,hq:l.hq,world:l.world,ret:l.ret,buyer:e.buyerName})}
+    });
+  }
+  chars.forEach(c=>{const d=S.detect[c.id]=S.detect[c.id]||{};
+    const have=new Set((d.sold||[]).map(tradeKey));
+    d.sold=[...(d.sold||[]),...sold[c.id].filter(x=>!have.has(tradeKey(x)))].sort((a,b)=>b.t-a.t).slice(0,500);d.ts=Date.now();
+    S.rsnap[c.id]={t:Date.now(),list:cur[c.id]};
+  });
+}
+/* 跨服購買確認：角色同一時間只會在一個伺服器，確認一筆「是我」後，
+   同角色、同伺服器、彼此間隔 1 小時內連續的待處理買入視為同一趟，一起加入 */
+const SESSION_GAP=3600;
+function sessionOf(charId,x){
+  const have=new Set(S.journal.map(r=>r.src).filter(Boolean));
+  const pool=(S.detect[charId]?.found||[]).filter(f=>f.world===x.world&&!have.has(tradeKey(f))&&!S.ignored.has(tradeKey(f)));
+  const out=[x];const inSet=new Set([tradeKey(x)]);let grew=true;
+  while(grew){grew=false;for(const f of pool){const k=tradeKey(f);if(inSet.has(k))continue;
+    if(out.some(o=>Math.abs(o.t-f.t)<=SESSION_GAP)){out.push(f);inSet.add(k);grew=true}}}
+  return out;
 }
 function importTrade(charId,x){
-  const ch=charOf(charId);
-  S.journal.push({id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),charId,itemId:x.itemId,side:'buy',price:x.p,qty:x.q,hq:x.hq,
-    world:x.world||ch?.world,tax:S.tax[x.world]??5,time:x.t*1000,note:'自動偵測',src:tradeKey(x)});
+  const ch=charOf(charId);const sell=x.side==='sell';
+  S.journal.push({id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),charId,itemId:x.itemId,side:sell?'sell':'buy',price:x.p,qty:x.q,hq:x.hq,
+    world:x.world||ch?.world,tax:sell?0:S.tax[x.world]??5,time:x.t*1000,note:'自動偵測',src:tradeKey(x),ret:sell?x.ret:undefined});
 }
 function detectedRows(){
   const chars=S.jview==='all'?S.chars:S.chars.filter(c=>c.id===S.jview);
   const have=new Set(S.journal.map(r=>r.src).filter(Boolean));
-  const rows=[];chars.forEach(c=>(S.detect[c.id]?.found||[]).forEach(x=>rows.push({c,x,k:tradeKey(x),added:have.has(tradeKey(x)),ign:S.ignored.has(tradeKey(x))})));
+  const rows=[];const byK=new Map();
+  chars.forEach(c=>{const d=S.detect[c.id]||{};[...(d.found||[]),...(d.sold||[])].forEach(x=>{const k=tradeKey(x);
+    if(x.amb&&byK.has(k)){byK.get(k).cands.push(c);return}
+    const row={c,x,k,cands:[c],added:have.has(k),ign:S.ignored.has(k)};if(x.amb)byK.set(k,row);rows.push(row)})});
+  // 同名待確認的候選＝所有登記了這個名稱的角色（不只目前檢視中的）
+  rows.forEach(r=>{if(r.x.amb)r.cands=S.chars.filter(c=>lc(c.name)===lc(r.c.name)&&(S.detect[c.id]?.found||[]).some(f=>tradeKey(f)===r.k))});
   return {chars,rows:rows.sort((a,b)=>b.x.t-a.x.t)};
 }
 
@@ -17632,32 +17704,73 @@ function charBar(){
   const hasNone=S.journal.some(r=>!charOf(r.charId));
   return `<div class="tabs" style="flex-wrap:wrap;align-items:center">
     ${chip('all','全部角色（合併）')}
-    ${S.chars.map(c=>chip(c.id,esc(c.name),WN[c.world]||'')).join('')}
+    ${S.chars.map(c=>chip(c.id,esc(charLabel(c)),c.rets?.length?`${c.rets.length} 雇員`:'')).join('')}
     ${hasNone?chip('none','未指定角色'):''}
     <button class="btn" data-charadd="1">＋ 新增角色</button>
-    ${charOf(S.jview)?`<button class="btn sm" data-charedit="${S.jview}">編輯角色</button><button class="btn sm" data-chardel="${S.jview}">刪除角色</button>`:''}
+    ${charOf(S.jview)?`<button class="btn sm" data-charedit="${S.jview}">編輯角色／雇員</button><button class="btn sm" data-chardel="${S.jview}">刪除角色</button>`:''}
   </div>`;
 }
+/* 雇員管理：直接在交易紀錄本新增／移除雇員（賣出偵測靠雇員名稱＋伺服器） */
+function retPanel(){
+  if(!S.chars.length||S.jview==='none')return '';
+  const chars=S.jview==='all'?S.chars:S.chars.filter(c=>c.id===S.jview);
+  const defC=chars[0];
+  return `<div class="panel" style="margin-bottom:14px"><h2>雇員<span class="muted">賣出靠雇員的上架偵測・名稱要和遊戲中完全相同</span></h2>
+    <table class="compact">${chars.map(c=>`<tr><td class="l" style="width:1%;white-space:nowrap;padding-right:14px">${esc(charLabel(c))}</td><td class="l">
+      ${c.rets.length?c.rets.map((r,i)=>`<span class="tag" style="font-size:12px;padding:2px 4px 2px 8px;margin:2px 6px 2px 0;color:var(--text)">${esc(r.name)}<span class="muted">@${WN[r.world]||''}</span>
+        <button class="btn sm" data-retdel="${c.id}|${i}" title="移除雇員" style="padding:0 5px;margin-left:4px;border:0">✕</button></span>`).join(''):'<span class="muted">尚未登記雇員</span>'}</td></tr>`).join('')}</table>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px">
+      ${chars.length>1?`<select id="rchar" class="scope" style="padding:4px 8px">${chars.map(c=>`<option value="${c.id}">${esc(charLabel(c))}</option>`).join('')}</select>`:`<input type="hidden" id="rchar" value="${defC.id}">`}
+      <input id="rname" placeholder="雇員名稱" style="background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:5px 9px;width:180px">
+      <select id="rworld" class="scope" style="padding:4px 8px">${worldOpts(defC.world)}</select>
+      <button class="btn sm primary" data-retadd="1">＋ 新增雇員</button>
+      <span class="muted" style="font-size:12px">伺服器選雇員上架的那個伺服器</span>
+    </div></div>`;
+}
+function addRetainer(){
+  const c=charOf($('#rchar').value);const name=$('#rname').value.trim();const world=+$('#rworld').value;
+  if(!c)return;if(!name){$('#rname').focus();return toast('請輸入雇員名稱')}
+  const owner=S.chars.find(x=>x.rets.some(r=>r.world===world&&lc(r.name)===lc(name)));
+  if(owner)return toast(owner===c?'這個雇員已經登記過了':`這個雇員已登記在「${charLabel(owner)}」底下`);
+  c.rets.push({name,world});saveChars();toast(`已新增雇員 ${name}@${WN[world]}，按「掃描」開始記錄上架`);route();
+}
+function listingPanel(chars){
+  const ls=[];chars.forEach(c=>(S.rsnap[c.id]?.list||[]).forEach(l=>ls.push({c,l})));
+  if(!chars.some(c=>c.rets?.length))return '';
+  const multi=chars.length>1;
+  return `<details style="margin-top:10px"><summary class="muted" style="cursor:pointer">雇員上架中（${ls.length} 筆・上次掃描時的快照）</summary>
+    ${ls.length?`<div style="max-height:300px;overflow:auto;margin-top:6px"><table class="compact"><tr>${multi?'<th class="l">角色</th>':''}<th class="l">雇員</th><th class="l">伺服器</th><th class="l">物品</th><th>單價</th><th>數量</th><th>小計</th></tr>
+    ${ls.sort((a,b)=>a.l.ret.localeCompare(b.l.ret)||b.l.p*b.l.q-a.l.p*a.l.q).map(({c,l})=>`<tr>${multi?`<td class="l">${esc(charLabel(c))}</td>`:''}<td class="l">${esc(l.ret)}</td><td class="l">${WN[l.world]||''}</td>
+      <td class="l"><a href="#/item/${l.itemId}">${esc(ITEM[l.itemId]?.n||l.itemId)}</a>${l.hq?'<span class="hq">HQ</span>':''}</td><td class="num">${fmt(l.p)}</td><td class="num">${fmt(l.q)}</td><td class="num">${fmt(l.p*l.q)}</td></tr>`).join('')}</table></div>`
+    :'<div class="empty">目前沒有找到雇員的上架。請確認雇員名稱與伺服器正確，且該物品的市場資料有人上傳過。</div>'}</details>`;
+}
 function detectPanel(){
-  if(!S.chars.length)return `<div class="panel" style="margin-bottom:14px"><h2>自動偵測購買</h2><div class="empty">先按「＋ 新增角色」輸入角色名稱和伺服器，就能掃描這個角色最近 7 天在市場板買過的東西。</div></div>`;
+  if(!S.chars.length)return `<div class="panel" style="margin-bottom:14px"><h2>自動偵測交易</h2><div class="empty">先按「＋ 新增角色」輸入角色名稱、伺服器和雇員，就能掃描這個角色最近 7 天在市場板買過的東西，以及雇員賣出的東西。</div></div>`;
   if(S.jview==='none')return '';
   const {chars,rows}=detectedRows();
   const last=Math.min(...chars.map(c=>S.detect[c.id]?.t||0));
-  const pending=rows.filter(r=>!r.added&&!r.ign);
+  const pending=rows.filter(r=>!r.added&&!r.ign&&!r.x.amb);const ambN=rows.filter(r=>!r.added&&!r.ign&&r.x.amb).length;
   const showAll=S.showDetAll;const list=showAll?rows:pending;
-  return `<div class="panel" style="margin-bottom:14px"><h2>自動偵測購買<span class="muted">${chars.length>1?chars.length+' 個角色・':''}近 7 天・${last?'上次掃描 '+ago(last):'尚未掃描'}</span>
+  const noRet=chars.filter(c=>!c.rets?.length);
+  return `<div class="panel" style="margin-bottom:14px"><h2>自動偵測交易<span class="muted">${chars.length>1?chars.length+' 個角色・':''}買入近 7 天・${last?'上次掃描 '+ago(last):'尚未掃描'}</span>
     <span style="margin-left:auto;display:flex;gap:6px">
       ${rows.length?`<button class="btn sm" data-detall="1">${showAll?'只看未處理':'顯示全部（含已加入／略過）'}</button>`:''}
-      ${pending.length?`<button class="btn sm" data-detimport="all">全部加入（${pending.length}）</button>`:''}
+      ${pending.length?`<button class="btn sm" data-detimport="all" ${ambN?`title="${ambN} 筆同名待確認不會自動加入"`:''}>全部加入（${pending.length}）</button>`:''}
       <button class="btn sm primary" data-scan="1">掃描</button></span></h2>
-    ${list.length?`<div style="max-height:360px;overflow:auto"><table class="compact"><tr><th class="l">時間</th>${chars.length>1?'<th class="l">角色</th>':''}<th class="l">物品</th><th class="l">伺服器</th><th>單價</th><th>數量</th><th>含稅金額</th><th></th></tr>
-    ${list.map(r=>`<tr><td class="l num muted">${tstr(r.x.t)}</td>${chars.length>1?`<td class="l">${esc(r.c.name)}</td>`:''}
-      <td class="l"><a href="#/item/${r.x.itemId}">${esc(ITEM[r.x.itemId]?.n||r.x.itemId)}</a>${r.x.hq?'<span class="hq">HQ</span>':''}</td><td class="l">${WN[r.x.world]||''}</td>
-      <td class="num">${fmt(r.x.p)}</td><td class="num">${fmt(r.x.q)}</td><td class="num">${fmt(r.x.p*r.x.q*(1+(S.tax[r.x.world]??5)/100))}</td>
-      <td>${r.added?'<span class="tag green">已加入</span>':r.ign?`<span class="tag">已略過</span> <button class="btn sm" data-detunign="${r.k}">復原</button>`:
-        `<button class="btn sm" data-detimport="${r.c.id}::${r.k}">加入紀錄</button> <button class="btn sm" data-detign="${r.k}">略過</button>`}</td></tr>`).join('')}</table></div>`
-      :`<div class="empty">${last?'沒有待處理的購買紀錄。':'按「掃描」開始。第一次約需 15–30 秒。'}</div>`}
-    <p class="note">比對 Universalis 成交紀錄的買家名稱，只能偵測<b>買入</b>；成交紀錄不含賣家，<b>賣出請手動新增</b>。只有被其他玩家上傳過的市場資料才查得到，可能有遺漏。</p></div>`;
+    ${list.length?`<div style="max-height:360px;overflow:auto"><table class="compact"><tr><th class="l">時間</th>${chars.length>1?'<th class="l">角色</th>':''}<th class="l">買賣</th><th class="l">物品</th><th class="l">伺服器</th><th class="l">雇員</th><th>單價</th><th>數量</th><th>金額</th><th></th></tr>
+    ${list.map(r=>{const sell=r.x.side==='sell';const amt=sell?r.x.p*r.x.q:r.x.p*r.x.q*(1+(S.tax[r.x.world]??5)/100);
+      return `<tr><td class="l num muted">${tstr(r.x.t)}</td>${chars.length>1?`<td class="l">${esc(charLabel(r.c))}</td>`:''}<td class="l ${sell?'down':'up'}">${sell?'賣出':'買入'}</td>
+      <td class="l"><a href="#/item/${r.x.itemId}">${esc(ITEM[r.x.itemId]?.n||r.x.itemId)}</a>${r.x.hq?'<span class="hq">HQ</span>':''}</td>
+      <td class="l">${WN[r.x.world]||''}${!sell&&r.x.world!==r.c.world?' <span class="tag">跨服</span>':''}${r.x.amb?' <span class="tag" title="成交紀錄只有買家名稱、沒有伺服器，你登記的同名角色都可能是買家">同名待確認</span>':''}</td><td class="l">${sell?esc(r.x.ret):'<span class="muted">—</span>'}</td>
+      <td class="num">${fmt(r.x.p)}</td><td class="num">${fmt(r.x.q)}</td><td class="num">${fmt(amt)}</td>
+      <td style="white-space:nowrap">${r.added?'<span class="tag green">已加入</span>':r.ign?`<span class="tag">已略過</span> <button class="btn sm" data-detunign="${r.k}">復原</button>`:
+        (r.x.amb?r.cands.map(c=>{const n=sessionOf(c.id,r.x).length;return `<button class="btn sm" data-detsess="${c.id}::${r.k}" title="同伺服器、前後 1 小時內連續的買入一起歸給這個角色">是 ${esc(charLabel(c))}${n>1?`（同時段 ${n} 筆）`:''}</button> `}).join(''):!sell&&r.x.world!==r.c.world?(n=>`<button class="btn sm" data-detsess="${r.c.id}::${r.k}" title="同伺服器、前後 1 小時內連續的買入一起加入">是我${n>1?`（同時段 ${n} 筆）`:''}</button> `)(sessionOf(r.c.id,r.x).length):`<button class="btn sm" data-detimport="${r.c.id}::${r.k}">加入紀錄</button> `)+`<button class="btn sm" data-detign="${r.k}">略過</button>`}</td></tr>`}).join('')}</table></div>`
+      :`<div class="empty">${last?'沒有待處理的交易紀錄。':'按「掃描」開始。第一次約需 30–60 秒。'}</div>`}
+    ${listingPanel(chars)}
+    <p class="note"><b>買入</b>：比對 Universalis 成交紀錄的買家名稱，掃描陸行鳥 DC 全部伺服器，所以跨服購買也抓得到（金額含稅）。成交紀錄只有買家名稱、沒有買家所屬伺服器，所以同名的其他伺服器玩家也會被比對到，標「跨服」的請自行確認：按「是我」會把同伺服器、前後 1 小時內連續的買入當成同一趟一起加入，不是你買的就按「略過」；如果你登記了同名的角色（例如 伊萊諾斯@巴哈姆特 和 伊萊諾斯@利維坦），這類交易會標「同名待確認」，由你選擇歸給哪個角色。
+    <b>賣出</b>：成交紀錄不含賣家，改為記錄雇員的上架；下次掃描時，消失的掛單若在同伺服器找得到同價、同量的成交，就判定為賣出（金額為成交價，不含稅）。所以<b>要定期掃描</b>，第一次掃描只會建立上架快照。
+    ${noRet.length?`<br><span class="up">${noRet.map(c=>esc(charLabel(c))).join('、')} 還沒有登記雇員，到「編輯角色／雇員」登記才能偵測賣出。</span>`:''}
+    只有被其他玩家上傳過的市場資料才查得到，可能有遺漏。</p></div>`;
 }
 async function renderJournal(tok){
   if(S.jview!=='all'&&S.jview!=='none'&&!charOf(S.jview))S.jview='all';
@@ -17673,6 +17786,7 @@ async function renderJournal(tok){
   const viewName=merged?'全部角色（合併）':S.jview==='none'?'未指定角色':esc(charName(S.jview));
   $('#view').innerHTML=`<h1>交易紀錄本 <span class="muted" style="font-size:13px;font-weight:400">${viewName}・只記錄遊戲中實際完成的交易・現價以陸行鳥 DC 股價估算</span></h1>
   ${charBar()}
+  ${retPanel()}
   ${detectPanel()}
   <div class="tabs"><button class="btn primary" data-log="">＋ 手動新增</button><button class="btn" id="jexp">匯出 JSON</button><label class="btn">匯入 JSON<input type="file" id="jimp" accept=".json" hidden></label></div>
   <div class="grid" style="grid-template-columns:repeat(5,minmax(0,1fr));margin-bottom:14px">
@@ -17686,37 +17800,54 @@ async function renderJournal(tok){
   ${hold.map(p=>`<tr class="row" data-go="#/item/${p.itemId}"><td><div class="name">${ico(ITEM[p.itemId])}<span>${esc(ITEM[p.itemId]?.n)}</span>${p.hq?'<span class="hq">HQ</span>':''}</div></td><td class="num">${fmt(p.qty)}</td><td class="num">${fmt(p.cost/p.qty,1)}</td><td class="num">${fmt(p.price)}</td><td class="num">${fmt(p.v)}</td><td>${signed(p.u)}</td><td>${pct(p.u!=null&&p.cost?p.u/p.cost*100:null)}</td><td>${signed(p.realized)}</td></tr>`).join('')||'<tr><td colspan=8 class="empty">目前沒有持倉</td></tr>'}</table></div>
   <div class="panel"><h2>交易紀錄<span class="muted">${recs.length} 筆</span></h2><table><tr><th class="l">時間</th>${merged?'<th class="l">角色</th>':''}<th class="l">買賣</th><th class="l">物品</th><th class="l">伺服器</th><th>單價</th><th>數量</th><th>稅率</th><th>金額</th><th class="l">備註</th><th></th></tr>
   ${[...recs].sort((a,b)=>b.time-a.time).map(r=>{const amt=r.side==='buy'?r.price*r.qty*(1+(r.tax||0)/100):r.price*r.qty;
-   return `<tr><td class="num l muted">${tstr(r.time/1000)}</td>${merged?`<td class="l">${esc(charName(r.charId))}</td>`:''}<td class="l ${r.side==='buy'?'up':'down'}">${r.side==='buy'?'買入':'賣出'}</td><td class="l">${esc(ITEM[r.itemId]?.n||r.itemId)}${r.hq?'<span class="hq">HQ</span>':''}</td><td class="l">${WN[r.world]||'—'}</td>
+   return `<tr><td class="num l muted">${tstr(r.time/1000)}</td>${merged?`<td class="l">${esc(charName(r.charId))}</td>`:''}<td class="l ${r.side==='buy'?'up':'down'}">${r.side==='buy'?'買入':'賣出'}</td><td class="l">${esc(ITEM[r.itemId]?.n||r.itemId)}${r.hq?'<span class="hq">HQ</span>':''}</td><td class="l">${WN[r.world]||'—'}${r.side==='sell'&&r.ret?`<span class="muted">・${esc(r.ret)}</span>`:''}</td>
    <td class="num">${fmt(r.price)}</td><td class="num">${fmt(r.qty)}</td><td class="num">${r.side==='buy'?(r.tax||0)+'%':'—'}</td><td class="num">${fmt(amt)}</td><td class="l muted">${esc(r.note)}</td>
    <td style="white-space:nowrap"><button class="btn sm" data-edit="${r.id}">編輯</button> <button class="btn sm" data-del="${r.id}">刪除</button></td></tr>`}).join('')||`<tr><td colspan=${merged?11:10} class="empty">還沒有紀錄。可以掃描自動偵測，或按「手動新增」。</td></tr>`}</table>
-  <p class="note">買入金額＝單價 × 數量 ×（1＋稅率），遊戲中市場稅由買方支付。賣出以成交價記錄。損益採平均成本法${merged?'，合併檢視時同一物品跨角色合併計算':''}；賣出數量超過當時持倉的部分不計損益。${b.unmatched?`<span class="up">（有 ${b.unmatched} 筆賣出超過持倉，請確認是否漏記買入）</span>`:''}</p></div>`;
-  $('#jexp').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({version:2,chars:S.chars,journal:S.journal},null,1)],{type:'application/json'}));a.download='aex-journal.json';a.click()};
+  <p class="note">買入金額＝單價 × 數量 ×（1＋稅率），遊戲中市場稅由買方支付；買入伺服器可以和角色所在伺服器不同（跨服購買）。賣出以成交價記錄，伺服器欄顯示上架的雇員。損益採平均成本法${merged?'，合併檢視時同一物品跨角色合併計算':''}；賣出數量超過當時持倉的部分不計損益。${b.unmatched?`<span class="up">（有 ${b.unmatched} 筆賣出超過持倉，請確認是否漏記買入）</span>`:''}</p></div>`;
+  if($('#rname')){$('#rname').onkeydown=ev=>{if(ev.key==='Enter'&&!ev.isComposing)addRetainer()};
+    const rc=$('#rchar');if(rc.tagName==='SELECT')rc.onchange=()=>{const c=charOf(rc.value);if(c)$('#rworld').value=c.world}}
+  $('#jexp').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({version:3,chars:S.chars,journal:S.journal},null,1)],{type:'application/json'}));a.download='aex-journal.json';a.click()};
   $('#jimp').onchange=async ev=>{const f=ev.target.files[0];if(!f)return;try{const d=JSON.parse(await f.text());const j=Array.isArray(d)?d:d.journal;if(!Array.isArray(j))throw 0;
-    if(!confirm(`匯入會取代目前的 ${S.journal.length} 筆紀錄${d.chars?'與角色清單':''}，確定嗎？`))return;S.journal=j;saveJournal();if(Array.isArray(d.chars)){S.chars=d.chars;saveChars()}toast(`已匯入 ${j.length} 筆`);route()}catch{toast('檔案格式不正確')}};
+    if(!confirm(`匯入會取代目前的 ${S.journal.length} 筆紀錄${d.chars?'與角色清單':''}，確定嗎？`))return;S.journal=j;saveJournal();if(Array.isArray(d.chars)){S.chars=d.chars;S.chars.forEach(c=>{if(!Array.isArray(c.rets))c.rets=[]});saveChars()}toast(`已匯入 ${j.length} 筆`);route()}catch{toast('檔案格式不正確')}};
 }
 
+const worldOpts=sel=>WORLDS.map(([id,n])=>`<option value="${id}" ${sel==id?'selected':''}>${n}</option>`).join('');
 function openChar(editId){
   const c=editId?charOf(editId):null;
-  $('#mbox').innerHTML=`<h2>${c?'編輯角色':'新增角色'}</h2>
+  const rets=(c?.rets||[]).map(r=>({...r}));
+  $('#mbox').innerHTML=`<h2>${c?'編輯角色／雇員':'新增角色'}</h2>
   <div class="form">
     <div>角色名稱</div><div><input id="cname" value="${esc(c?.name||'')}" placeholder="和遊戲中完全相同"></div>
-    <div>伺服器</div><div><select id="cworld">${WORLDS.map(([id,n])=>`<option value="${id}" ${(c?.world||S.scope||4031)==id?'selected':''}>${n}</option>`).join('')}</select></div>
+    <div>伺服器</div><div><select id="cworld">${worldOpts(c?.world||S.scope||4031)}</select></div>
+    <div style="align-self:start;padding-top:6px">雇員</div><div><div id="crets"></div><button class="btn sm" id="cretadd">＋ 新增雇員</button></div>
   </div>
-  <p class="note">名稱用來比對市場成交紀錄裡的買家，請輸入完整名稱。</p>
+  <p class="note">角色名稱用來比對市場成交紀錄裡的買家（會掃描全 DC，跨服購買也算）。雇員名稱用來比對市場上架，以偵測賣出；雇員可以在不同伺服器上架，請選擇它上架的伺服器。名稱都要和遊戲中完全相同。</p>
   <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px"><button class="btn" id="ccancel">取消</button><button class="btn primary" id="csave">${c?'儲存':'新增並掃描'}</button></div>`;
+  const sync=()=>$('#crets').querySelectorAll('[data-ri]').forEach(row=>{const r=rets[+row.dataset.ri];r.name=row.querySelector('input').value;r.world=+row.querySelector('select').value});
+  const draw=()=>{$('#crets').innerHTML=rets.map((r,i)=>`<div class="row2" data-ri="${i}" style="display:flex;gap:6px;margin-bottom:6px"><input value="${esc(r.name)}" placeholder="雇員名稱" style="flex:1"><select style="width:110px">${worldOpts(r.world)}</select><button class="btn sm" data-rx="${i}" title="移除">✕</button></div>`).join('')||'<div class="muted" style="margin-bottom:6px">尚未登記雇員</div>'};
+  draw();
+  $('#cretadd').onclick=()=>{sync();rets.push({name:'',world:+$('#cworld').value});draw();$('#crets').querySelector(`[data-ri="${rets.length-1}"] input`).focus()};
+  $('#crets').onclick=ev=>{const x=ev.target.closest('[data-rx]');if(!x)return;sync();rets.splice(+x.dataset.rx,1);draw()};
   $('#modal').style.display='grid';$('#cname').focus();
   $('#ccancel').onclick=closeModal;
   $('#csave').onclick=async()=>{
+    sync();
     const name=$('#cname').value.trim(),world=+$('#cworld').value;if(!name)return toast('請輸入角色名稱');
     if(S.chars.some(x=>x.id!==c?.id&&x.name===name&&x.world===world))return toast('這個角色已經存在');
-    let ch;
-    if(c){const changed=c.name!==name||c.world!==world;c.name=name;c.world=world;if(changed)delete S.detect[c.id];ch=c}
-    else{ch={id:'c'+Date.now().toString(36),name,world};S.chars.push(ch);
+    const seen=new Set();const rs=[];
+    for(const r of rets){const n=r.name.trim();if(!n)continue;const k=r.world+'|'+lc(n);if(seen.has(k))continue;seen.add(k);rs.push({name:n,world:r.world})}
+    const owner=S.chars.find(x=>x.id!==c?.id&&x.rets?.some(a=>rs.some(b=>a.world===b.world&&lc(a.name)===lc(b.name))));
+    if(owner)return toast(`有雇員已登記在角色「${charLabel(owner)}」底下`);
+    let ch,needScan;
+    if(c){const changed=c.name!==name||c.world!==world;const oldR=new Set(c.rets.map(r=>r.world+'|'+lc(r.name)));
+      needScan=changed||rs.some(r=>!oldR.has(r.world+'|'+lc(r.name)));
+      c.name=name;c.world=world;c.rets=rs;if(changed&&S.detect[c.id])delete S.detect[c.id].found;ch=c}
+    else{ch={id:'c'+Date.now().toString(36),name,world,rets:rs};S.chars.push(ch);needScan=true;
       // 第一個角色：沒有角色的舊紀錄一併歸到這個角色
       if(S.chars.length===1)S.journal.forEach(r=>{if(!r.charId)r.charId=ch.id});saveJournal()}
     saveChars();lsSet('aex_detect',S.detect);S.jview=ch.id;lsSet('aex_jview',S.jview);closeModal();
     if(location.hash!=='#/journal')location.hash='#/journal';
-    if(!c||!S.detect[ch.id]){await scanChars([ch])}
+    if(needScan||!S.detect[ch.id]?.found){await scanChars([ch])}
     route();
   };
 }
@@ -17729,13 +17860,14 @@ function openLog(itemId,editId){
   const dt=new Date((r?.time)||Date.now());dt.setMinutes(dt.getMinutes()-dt.getTimezoneOffset());
   $('#mbox').innerHTML=`<h2>${r?'編輯紀錄':'手動新增交易紀錄'}<span class="muted">遊戲內已完成的交易</span></h2>
   <div class="form">
-    <div>角色</div><div><select id="fchar">${S.chars.map(c=>`<option value="${c.id}" ${defChar===c.id?'selected':''}>${esc(c.name)}（${WN[c.world]||''}）</option>`).join('')}<option value="" ${!charOf(defChar)?'selected':''}>未指定角色</option></select></div>
+    <div>角色</div><div><select id="fchar">${S.chars.map(c=>`<option value="${c.id}" ${defChar===c.id?'selected':''}>${esc(charLabel(c))}</option>`).join('')}<option value="" ${!charOf(defChar)?'selected':''}>未指定角色</option></select></div>
     <div>物品</div><div class="search" style="flex:none"><input id="fitem" placeholder="輸入名稱搜尋" value="${st.itemId?esc(ITEM[st.itemId].n):''}" autocomplete="off"><div class="dropdown" id="fdd"></div></div>
     <div>買賣</div><div class="row2"><div class="seg" id="fside"><button data-s="buy" class="buy ${st.side==='buy'?'on':''}">買入</button><button data-s="sell" class="sell ${st.side==='sell'?'on':''}">賣出</button></div>
       <label id="fhqw" style="margin-left:12px"><input type="checkbox" id="fhq" ${st.hq?'checked':''} style="width:auto"> HQ</label></div>
     <div>單價</div><div class="row2"><input id="fprice" type="number" min="0" value="${r?.price??''}"><span class="muted" id="fref" style="white-space:nowrap"></span></div>
     <div>數量</div><div><input id="fqty" type="number" min="1" value="${r?.qty??1}"></div>
-    <div>伺服器</div><div><select id="fworld">${WORLDS.map(([id,n])=>`<option value="${id}" ${defW==id?'selected':''}>${n}</option>`).join('')}</select></div>
+    <div id="fretl">雇員</div><div id="fretw"><select id="fret"></select></div>
+    <div id="fworldl">伺服器</div><div><select id="fworld">${worldOpts(defW)}</select></div>
     <div id="ftaxl">稅率 %</div><div><input id="ftax" type="number" min="0" max="10" step="0.5" value="${r?.tax??S.tax[defW]??5}"></div>
     <div>時間</div><div><input id="ftime" type="datetime-local" value="${dt.toISOString().slice(0,16)}"></div>
     <div>備註</div><div><input id="fnote" value="${esc(r?.note||'')}"></div>
@@ -17743,14 +17875,23 @@ function openLog(itemId,editId){
   </div>
   <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn" id="fcancel">取消</button><button class="btn primary" id="fsave">儲存</button></div>`;
   $('#modal').style.display='grid';
+  // 賣出看雇員：選雇員時帶入它上架的伺服器
+  const fillRets=sel=>{const c=charOf($('#fchar').value);const rs=c?.rets||[];
+    $('#fret').innerHTML=rs.map((x,i)=>`<option value="${i}" ${sel!=null&&lc(x.name)===lc(sel)?'selected':''}>${esc(x.name)}（${WN[x.world]||''}）</option>`).join('')
+      +(sel&&!rs.some(x=>lc(x.name)===lc(sel))?`<option value="keep" selected>${esc(sel)}</option>`:'')+`<option value="" ${!rs.length||(r&&!sel)?'selected':''}>${rs.length?'不指定':'這個角色尚未登記雇員'}</option>`};
+  const retPicked=()=>{const c=charOf($('#fchar').value);const v=$('#fret').value;return v==='keep'?{name:r?.ret}:v!==''?c?.rets?.[+v]:null};
+  const applyRet=()=>{const x=retPicked();if(x?.world){$('#fworld').value=x.world;$('#fworld').onchange()}};
+  fillRets(r?.side==='sell'?(r.ret||null):null);
   const upd=()=>{const it=ITEM[st.itemId];$('#fhqw').style.visibility=it?.canHq?'visible':'hidden';
     const buy=st.side==='buy';$('#ftax').disabled=!buy;$('#ftaxl').style.opacity=buy?1:.4;
+    $('#fretl').style.display=$('#fretw').style.display=buy?'none':'';$('#fworldl').textContent=buy?'購買伺服器':'上架伺服器';
     const p=+$('#fprice').value,q=+$('#fqty').value,t=+$('#ftax').value;const amt=buy?p*q*(1+t/100):p*q;
     $('#ftotal').innerHTML=p&&q?`${buy?'支出':'收入'} <span class="${buy?'up':'down'}">${fmt(amt)}</span> 金幣`:'';
     if(it&&S.hist[st.itemId]){const s=statsOf(S.hist[st.itemId].e,$('#fhq').checked,null);$('#fref').textContent=s.price!=null?'參考股價 '+fmt(s.price):''}else $('#fref').textContent=''};
   bindSearch($('#fitem'),$('#fdd'),it=>{st.itemId=it.id;$('#fitem').value=it.n;$('#fhq').checked=mainQ(it.id);loadHist([it.id]).then(upd);upd()});
-  $('#fside').onclick=ev=>{const s=ev.target.dataset.s;if(!s)return;st.side=s;$('#fside').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.s===s));upd()};
-  $('#fchar').onchange=()=>{const c=charOf($('#fchar').value);if(c){$('#fworld').value=c.world;$('#fworld').onchange()}};
+  $('#fside').onclick=ev=>{const s=ev.target.dataset.s;if(!s)return;st.side=s;$('#fside').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.s===s));if(s==='sell')applyRet();upd()};
+  $('#fchar').onchange=()=>{const c=charOf($('#fchar').value);fillRets(null);if(c){if(st.side==='sell'&&retPicked())applyRet();else{$('#fworld').value=c.world;$('#fworld').onchange()}}};
+  $('#fret').onchange=applyRet;
   $('#fworld').onchange=()=>{const w=+$('#fworld').value;if(S.tax[w]!=null)$('#ftax').value=S.tax[w];upd()};
   ['#fprice','#fqty','#ftax','#fhq'].forEach(s=>$(s).oninput=upd);
   $('#fcancel').onclick=closeModal;
@@ -17758,7 +17899,7 @@ function openLog(itemId,editId){
     const p=+$('#fprice').value,q=+$('#fqty').value;
     if(!st.itemId||!ITEM[st.itemId])return toast('請先選擇物品');if(!(p>0))return toast('請輸入單價');if(!(q>0))return toast('請輸入數量');
     const rec={id:r?.id||Date.now().toString(36)+Math.random().toString(36).slice(2,6),charId:$('#fchar').value||null,itemId:st.itemId,side:st.side,price:p,qty:q,hq:ITEM[st.itemId].canHq&&$('#fhq').checked,
-      world:+$('#fworld').value,tax:st.side==='buy'?+$('#ftax').value:0,time:new Date($('#ftime').value).getTime()||Date.now(),note:$('#fnote').value.trim(),src:r?.src};
+      world:+$('#fworld').value,tax:st.side==='buy'?+$('#ftax').value:0,time:new Date($('#ftime').value).getTime()||Date.now(),note:$('#fnote').value.trim(),src:r?.src,ret:st.side==='sell'?(retPicked()?.name||undefined):undefined};
     if(r)S.journal[S.journal.findIndex(x=>x.id===r.id)]=rec;else S.journal.push(rec);
     lsSet('aex_lastworld',rec.world);saveJournal();closeModal();toast('已儲存');if(location.hash.startsWith('#/journal'))route();else location.hash='#/journal';
   };
@@ -17771,18 +17912,26 @@ document.addEventListener('click',async ev=>{
   const t=ev.target;let el;
   if(el=t.closest('[data-jview]')){S.jview=el.dataset.jview;lsSet('aex_jview',S.jview);route();return}
   if(t.closest('[data-charadd]')){openChar();return}
+  if(t.closest('[data-retadd]')){addRetainer();return}
+  if(el=t.closest('[data-retdel]')){const [cid,i]=el.dataset.retdel.split('|');const c=charOf(cid);const r=c?.rets[+i];if(!r)return;
+    if(!confirm(`移除雇員「${r.name}@${WN[r.world]||''}」？
+已加入的交易紀錄會保留。`))return;
+    c.rets.splice(+i,1);if(S.rsnap[c.id])S.rsnap[c.id].list=S.rsnap[c.id].list.filter(l=>!(l.world===r.world&&lc(l.ret)===lc(r.name)));
+    saveChars();lsSet('aex_rsnap',S.rsnap);route();return}
   if(el=t.closest('[data-charedit]')){openChar(el.dataset.charedit);return}
   if(el=t.closest('[data-chardel]')){const c=charOf(el.dataset.chardel);const n=S.journal.filter(r=>r.charId===c.id).length;
-    if(!confirm(`刪除角色「${c.name}」？${n?`\n這個角色的 ${n} 筆紀錄會保留，改為「未指定角色」。`:''}`))return;
+    if(!confirm(`刪除角色「${charLabel(c)}」？${n?`\n這個角色的 ${n} 筆紀錄會保留，改為「未指定角色」。`:''}`))return;
     S.chars=S.chars.filter(x=>x.id!==c.id);S.journal.forEach(r=>{if(r.charId===c.id)r.charId=null});delete S.detect[c.id];
-    saveChars();saveJournal();lsSet('aex_detect',S.detect);S.jview='all';lsSet('aex_jview','all');route();return}
+    delete S.rsnap[c.id];saveChars();saveJournal();lsSet('aex_detect',S.detect);lsSet('aex_rsnap',S.rsnap);S.jview='all';lsSet('aex_jview','all');route();return}
   if(t.closest('[data-scan]')){const chars=S.jview==='all'?S.chars:S.chars.filter(c=>c.id===S.jview);await scanChars(chars);route();return}
   if(t.closest('[data-detall]')){S.showDetAll=!S.showDetAll;route();return}
   if(el=t.closest('[data-detimport]')){
     const v=el.dataset.detimport;
-    if(v==='all'){const {rows}=detectedRows();const p=rows.filter(r=>!r.added&&!r.ign);p.forEach(r=>importTrade(r.c.id,r.x));toast(`已加入 ${p.length} 筆`)}
-    else{const [cid,k]=v.split('::');const x=(S.detect[cid]?.found||[]).find(f=>tradeKey(f)===k);if(x){importTrade(cid,x);toast('已加入紀錄')}}
+    if(v==='all'){const {rows}=detectedRows();const p=rows.filter(r=>!r.added&&!r.ign&&!r.x.amb);p.forEach(r=>importTrade(r.c.id,r.x));const a=rows.length&&rows.filter(r=>!r.added&&!r.ign&&r.x.amb).length;toast(`已加入 ${p.length} 筆${a?`，${a} 筆同名待確認請手動選擇角色`:''}`)}
+    else{const [cid,k]=v.split('::');const d=S.detect[cid]||{};const x=[...(d.found||[]),...(d.sold||[])].find(f=>tradeKey(f)===k);if(x){importTrade(cid,x);toast('已加入紀錄')}}
     saveJournal();route();return}
+  if(el=t.closest('[data-detsess]')){const [cid,k]=el.dataset.detsess.split('::');const x=(S.detect[cid]?.found||[]).find(f=>tradeKey(f)===k);
+    if(x){const list=sessionOf(cid,x);list.forEach(f=>importTrade(cid,f));saveJournal();toast(`已加入 ${list.length} 筆（${WN[x.world]||''} 同時段）`);route()}return}
   if(el=t.closest('[data-detign]')){S.ignored.add(el.dataset.detign);lsSet('aex_ignored',[...S.ignored]);route();return}
   if(el=t.closest('[data-detunign]')){S.ignored.delete(el.dataset.detunign);lsSet('aex_ignored',[...S.ignored]);route();return}
 });
