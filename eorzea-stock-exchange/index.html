@@ -115,6 +115,9 @@ canvas{display:block;width:100%}
 .form{display:grid;grid-template-columns:90px 1fr;gap:10px 12px;align-items:center}
 .form input,.form select,.form textarea{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 9px;width:100%}
 .form .row2{display:flex;gap:8px;align-items:center}
+.brow{display:grid;grid-template-columns:minmax(0,1.6fr) auto 90px 110px 190px auto;gap:6px;align-items:center;margin-bottom:6px}
+.brow input{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 9px;width:100%}
+.brow .search input{padding-left:9px}.brow .search::before{display:none}.brow .dropdown{top:36px}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
 .seg button{background:transparent;border:0;padding:5px 14px;cursor:pointer}
 .seg button.on{background:var(--line);color:var(--text)}.seg.sm button{padding:3px 10px;font-size:12px}
@@ -219,6 +222,7 @@ table.quote td,table.quote th{white-space:nowrap}
   #modal{place-items:end center}
   #modal .box{width:100%;max-height:92vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px 14px calc(16px + env(safe-area-inset-bottom))}
   .form{grid-template-columns:76px 1fr;gap:10px}
+  .brow{grid-template-columns:auto minmax(0,1fr) minmax(0,1fr);padding:8px 0;border-bottom:1px solid var(--line)}.brow .search{grid-column:1/-1;order:0;flex:none}.brow .bt{grid-column:1/3}
   #overlay .box{width:calc(100vw - 32px)}
   /* 個股頁 */
   .item-head{flex-wrap:wrap;gap:10px}
@@ -17953,7 +17957,7 @@ async function renderJournal(tok){
   ${charBar()}
   ${retPanel()}
   ${detectPanel()}
-  <div class="tabs"><button class="btn primary" data-log="">＋ 手動新增</button><button class="btn" id="jexp">匯出 JSON</button><label class="btn">匯入 JSON<input type="file" id="jimp" accept=".json" hidden></label></div>
+  <div class="tabs" style="flex-wrap:wrap"><button class="btn primary" data-log="">＋ 手動新增</button><button class="btn" data-batch="1" title="一次輸入多筆，例如對照雇員的出售歷史補登">批次登記</button><button class="btn" id="jexp">匯出 JSON</button><label class="btn">匯入 JSON<input type="file" id="jimp" accept=".json" hidden></label></div>
   <div class="grid" style="grid-template-columns:repeat(5,minmax(0,1fr));margin-bottom:14px">
     <div class="card"><div class="t">累計買入成本（含稅）</div><div class="v num">${fmt(b.totalBuy)}</div></div>
     <div class="card"><div class="t">持倉成本</div><div class="v num">${fmt(cost)}</div></div>
@@ -18104,9 +18108,39 @@ function openLog(itemId,editId){
     <div>備註</div><div><input id="fnote" value="${esc(r?.note||'')}"></div>
     <div></div><div class="num" id="ftotal" style="font-size:16px"></div>
   </div>
+  <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><button class="btn sm" id="flook">查成交紀錄帶入</button>
+      <span class="note" id="flookn">選好物品和伺服器後，列出該伺服器近 30 天的成交，點一筆自動填入單價、數量、時間。</span></div>
+    <div id="flist"></div>
+  </div>
   <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn" id="fcancel">取消</button><button class="btn primary" id="fsave">儲存</button></div>`;
   $('#modal').style.display='grid';
   // 賣出看雇員：選雇員時帶入它上架的伺服器
+  // 查成交紀錄：列出所選伺服器近 30 天的成交，點選帶入（同時記下來源，之後自動偵測不會重複）
+  st.pick=null;
+  const toLocal=ms=>{const d=new Date(ms);d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,16)};
+  $('#flook').onclick=async()=>{
+    if(!st.itemId)return toast('請先選擇物品');const w=+$('#fworld').value,id=st.itemId;
+    $('#flist').innerHTML='<div class="empty" style="padding:12px">讀取中…</div>';
+    let es;try{const d=await getJSON(`${API}/v2/history/${w}/${id}?entriesToReturn=999&entriesWithin=${30*DAY}&fields=entries.hq,entries.pricePerUnit,entries.quantity,entries.timestamp,entries.buyerName`,{persist:false,ttl:60000});es=(d?.entries||[]).sort((a,b)=>b.timestamp-a.timestamp)}
+    catch(e){$('#flist').innerHTML='<div class="empty" style="padding:12px">讀取失敗，請稍後再試</div>';return}
+    if(st.itemId!==id||+$('#fworld').value!==w)return;
+    const me=lc(charOf($('#fchar').value)?.name);const wantHq=ITEM[id]?.canHq&&$('#fhq').checked;
+    const done=new Set(S.journal.filter(x=>x.itemId===id).map(x=>x.price+'|'+x.qty+'|'+Math.floor(x.time/60000)));
+    st.looked=es;
+    $('#flookn').textContent=`${WN[w]}・${ITEM[id].n}・近 30 天 ${es.length} 筆${es.length>=999?'（達上限，只顯示最近的）':''}`;
+    $('#flist').innerHTML=es.length?`<div style="max-height:240px;overflow:auto;margin-top:8px"><table class="compact"><tr><th class="l">時間</th><th>單價</th><th>數量</th><th class="l">買家</th><th></th></tr>
+      ${es.map((x,i)=>{const mine=st.side==='buy'&&me&&lc(x.buyerName)===me;const dup=done.has(x.pricePerUnit+'|'+x.quantity+'|'+Math.floor(x.timestamp/60));
+        return `<tr class="row" data-pick="${i}" style="${!!x.hq!==!!wantHq?'opacity:.55':''}"><td class="l num muted">${tstr(x.timestamp)}</td><td class="num">${fmt(x.pricePerUnit)}${x.hq?'<span class="hq">HQ</span>':''}</td><td class="num">${fmt(x.quantity)}</td>
+        <td class="l ${mine?'up':'muted'}">${esc(x.buyerName||'')}${mine?' ★':''}</td><td>${dup?'<span class="tag green">已登記</span>':''}</td></tr>`}).join('')}</table></div>
+      <p class="note" style="margin:6px 0 0">${st.side==='sell'?'對照遊戲中雇員的「出售歷史」，找同時間、同價、同量的那筆。':'★＝買家名稱和角色相同。'}淡色＝品質和目前勾選的 HQ 不同。</p>`
+      :'<div class="empty" style="padding:12px">這個伺服器近 30 天沒有成交紀錄（或沒有人上傳過）</div>';
+  };
+  $('#flist').onclick=ev=>{const tr=ev.target.closest('[data-pick]');if(!tr)return;const x=st.looked?.[+tr.dataset.pick];if(!x)return;
+    $('#fprice').value=x.pricePerUnit;$('#fqty').value=x.quantity;if(ITEM[st.itemId]?.canHq)$('#fhq').checked=!!x.hq;$('#ftime').value=toLocal(x.timestamp*1000);
+    st.pick={itemId:st.itemId,t:x.timestamp,p:x.pricePerUnit,q:x.quantity,hq:!!x.hq,world:+$('#fworld').value,tv:$('#ftime').value};
+    $('#flist').querySelectorAll('tr').forEach(t=>t.style.outline='');tr.style.outline='1px solid var(--gold)';upd()};
+  $('#fworld').addEventListener('change',()=>{$('#flist').innerHTML='';st.looked=null});
   const fillRets=sel=>{const c=charOf($('#fchar').value);const rs=c?.rets||[];
     $('#fret').innerHTML=rs.map((x,i)=>`<option value="${i}" ${sel!=null&&lc(x.name)===lc(sel)?'selected':''}>${esc(x.name)}（${WN[x.world]||''}）</option>`).join('')
       +(sel&&!rs.some(x=>lc(x.name)===lc(sel))?`<option value="keep" selected>${esc(sel)}</option>`:'')+`<option value="" ${!rs.length||(r&&!sel)?'selected':''}>${rs.length?'不指定':'這個角色尚未登記雇員'}</option>`};
@@ -18119,7 +18153,7 @@ function openLog(itemId,editId){
     const p=+$('#fprice').value,q=+$('#fqty').value,t=+$('#ftax').value;const amt=buy?p*q*(1+t/100):p*q;
     $('#ftotal').innerHTML=p&&q?`${buy?'支出':'收入'} <span class="${buy?'up':'down'}">${fmt(amt)}</span> 金幣`:'';
     if(it&&S.hist[st.itemId]){const s=statsOf(S.hist[st.itemId].e,$('#fhq').checked,null);$('#fref').textContent=s.price!=null?'參考股價 '+fmt(s.price):''}else $('#fref').textContent=''};
-  bindSearch($('#fitem'),$('#fdd'),it=>{st.itemId=it.id;$('#fitem').value=it.n;$('#fhq').checked=mainQ(it.id);loadHist([it.id]).then(upd);upd()});
+  bindSearch($('#fitem'),$('#fdd'),it=>{st.itemId=it.id;$('#fitem').value=it.n;$('#flist').innerHTML='';st.looked=null;$('#fhq').checked=mainQ(it.id);loadHist([it.id]).then(upd);upd()});
   $('#fside').onclick=ev=>{const s=ev.target.dataset.s;if(!s)return;st.side=s;$('#fside').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.s===s));if(s==='sell')applyRet();upd()};
   $('#fchar').onchange=()=>{const c=charOf($('#fchar').value);fillRets(null);if(c){if(st.side==='sell'&&retPicked())applyRet();else{$('#fworld').value=c.world;$('#fworld').onchange()}}};
   $('#fret').onchange=applyRet;
@@ -18129,14 +18163,75 @@ function openLog(itemId,editId){
   $('#fsave').onclick=()=>{
     const p=+$('#fprice').value,q=+$('#fqty').value;
     if(!st.itemId||!ITEM[st.itemId])return toast('請先選擇物品');if(!(p>0))return toast('請輸入單價');if(!(q>0))return toast('請輸入數量');
+    const pk=st.pick&&st.pick.itemId===st.itemId&&st.pick.p===p&&st.pick.q===q&&st.pick.world===+$('#fworld').value&&st.pick.tv===$('#ftime').value?st.pick:null;
     const rec={id:r?.id||Date.now().toString(36)+Math.random().toString(36).slice(2,6),charId:$('#fchar').value||null,itemId:st.itemId,side:st.side,price:p,qty:q,hq:ITEM[st.itemId].canHq&&$('#fhq').checked,
-      world:+$('#fworld').value,tax:st.side==='buy'?+$('#ftax').value:0,time:new Date($('#ftime').value).getTime()||Date.now(),note:$('#fnote').value.trim(),src:r?.src,ret:st.side==='sell'?(retPicked()?.name||undefined):undefined};
+      world:+$('#fworld').value,tax:st.side==='buy'?+$('#ftax').value:0,time:pk?pk.t*1000:(new Date($('#ftime').value).getTime()||Date.now()),note:$('#fnote').value.trim(),src:pk?tradeKey({...pk,side:st.side}):r?.src,ret:st.side==='sell'?(retPicked()?.name||undefined):undefined};
     if(r)S.journal[S.journal.findIndex(x=>x.id===r.id)]=rec;else S.journal.push(rec);
     lsSet('aex_lastworld',rec.world);saveJournal();closeModal();toast('已儲存');if(location.hash.startsWith('#/journal'))route();else location.hash='#/journal';
   };
   if(st.itemId)loadHist([st.itemId]).then(upd);upd();
 }
-function closeModal(){$('#modal').style.display='none';$('#mbox').innerHTML=''}
+/* 批次登記：一次輸入多筆（例如對照雇員的出售歷史補登） */
+function openBatch(){
+  const defChar=charOf(S.jview)?S.jview:(S.chars[0]?.id||'');
+  const st={side:'sell',rows:[]};const nowL=(()=>{const d=new Date();d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,16)})();
+  $('#mbox').style.width='min(900px,100%)';
+  $('#mbox').innerHTML=`<h2>批次登記<span class="muted">一次輸入多筆遊戲內已完成的交易</span></h2>
+  <div class="form">
+    <div>角色</div><div><select id="bchar">${S.chars.map(c=>`<option value="${c.id}" ${defChar===c.id?'selected':''}>${esc(charLabel(c))}</option>`).join('')}<option value="" ${!charOf(defChar)?'selected':''}>未指定角色</option></select></div>
+    <div>買賣</div><div><div class="seg" id="bside"><button data-s="buy" class="buy">買入</button><button data-s="sell" class="sell on">賣出</button></div></div>
+    <div id="bretl">雇員</div><div id="bretw"><select id="bret"></select></div>
+    <div id="bworldl">上架伺服器</div><div><select id="bworld"></select></div>
+    <div id="btaxl" style="display:none">稅率 %</div><div id="btaxw" style="display:none"><input id="btax" type="number" min="0" max="10" step="0.5" value="5"></div>
+  </div>
+  <div class="note" style="margin:12px 0 6px">每列一筆。物品、單價、數量都填了才會存；空白列會略過。${S.chars.length?'':'（還沒有角色，紀錄會歸到「未指定角色」）'}</div>
+  <div id="brows"></div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px"><button class="btn sm" id="badd">＋ 再加 5 列</button><span class="num" id="btotal" style="margin-left:auto"></span></div>
+  <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px"><button class="btn" id="bcancel">取消</button><button class="btn primary" id="bsave">全部儲存</button></div>`;
+  $('#modal').style.display='grid';
+  const fillRets=()=>{const c=charOf($('#bchar').value);const rs=c?.rets||[];
+    $('#bret').innerHTML=rs.map((x,i)=>`<option value="${i}">${esc(x.name)}（${WN[x.world]||''}）</option>`).join('')+`<option value="">${rs.length?'不指定':'這個角色尚未登記雇員'}</option>`;
+    const x=rs[0];$('#bworld').innerHTML=worldOpts(x?.world||c?.world||S.scope||4031)};
+  const applyRet=()=>{const c=charOf($('#bchar').value);const v=$('#bret').value;const x=v!==''?c?.rets?.[+v]:null;if(x)$('#bworld').value=x.world;applyTax()};
+  const applyTax=()=>{const w=+$('#bworld').value;if(S.tax[w]!=null)$('#btax').value=S.tax[w];tot()};
+  const sideUI=()=>{const buy=st.side==='buy';$('#bretl').style.display=$('#bretw').style.display=buy?'none':'';$('#btaxl').style.display=$('#btaxw').style.display=buy?'':'none';
+    $('#bworldl').textContent=buy?'購買伺服器':'上架伺服器';tot()};
+  const tot=()=>{let n=0,a=0;st.rows.forEach(r=>{const p=+r.el.querySelector('.bp').value,q=+r.el.querySelector('.bq').value;if(r.itemId&&p>0&&q>0){n++;a+=st.side==='buy'?p*q*(1+(+$('#btax').value||0)/100):p*q}});
+    $('#btotal').innerHTML=n?`${n} 筆・${st.side==='buy'?'支出':'收入'} <span class="${st.side==='buy'?'up':'down'}">${fmt(a)}</span> 金幣`:''};
+  const addRows=k=>{for(let i=0;i<k;i++){
+    const el=document.createElement('div');el.className='brow';
+    el.innerHTML=`<div class="search" style="flex:none"><input class="bi" placeholder="物品名稱" autocomplete="off"><div class="dropdown"></div></div>
+      <label class="bhqw" style="visibility:hidden;white-space:nowrap"><input type="checkbox" class="bhq" style="width:auto"> HQ</label>
+      <input class="bq" type="number" min="1" placeholder="數量"><input class="bp" type="number" min="0" placeholder="單價">
+      <input class="bt" type="datetime-local" value="${nowL}"><button class="btn sm bx" title="清除這列">✕</button>`;
+    const row={el,itemId:null};st.rows.push(row);$('#brows').appendChild(el);
+    bindSearch(el.querySelector('.bi'),el.querySelector('.dropdown'),it=>{row.itemId=it.id;el.querySelector('.bi').value=it.n;el.querySelector('.bhqw').style.visibility=it.canHq?'visible':'hidden';el.querySelector('.bhq').checked=mainQ(it.id);el.querySelector('.bq').focus();tot()});
+    el.querySelector('.bi').addEventListener('input',()=>{row.itemId=null;tot()});
+    el.querySelectorAll('.bq,.bp').forEach(x=>x.oninput=tot);
+    el.querySelector('.bx').onclick=()=>{row.itemId=null;el.querySelectorAll('input').forEach(x=>{if(x.type==='checkbox')x.checked=false;else if(x.type!=='datetime-local')x.value=''});el.querySelector('.bhqw').style.visibility='hidden';tot()};
+  }};
+  fillRets();applyTax();addRows(5);sideUI();
+  $('#bchar').onchange=()=>{fillRets();if(st.side==='buy'){const c=charOf($('#bchar').value);if(c)$('#bworld').value=c.world}applyTax()};
+  $('#bret').onchange=applyRet;$('#bworld').onchange=applyTax;$('#btax').oninput=tot;
+  $('#bside').onclick=ev=>{const s=ev.target.dataset.s;if(!s)return;st.side=s;$('#bside').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.s===s));
+    if(s==='sell')applyRet();else{const c=charOf($('#bchar').value);if(c)$('#bworld').value=c.world;applyTax()}sideUI()};
+  $('#badd').onclick=()=>addRows(5);
+  $('#bcancel').onclick=closeModal;
+  $('#bsave').onclick=()=>{
+    const recs=[];const bad=[];const c=charOf($('#bchar').value);const v=$('#bret').value;const ret=st.side==='sell'&&v!==''?c?.rets?.[+v]?.name:undefined;
+    const world=+$('#bworld').value,tax=st.side==='buy'?+$('#btax').value||0:0;
+    st.rows.forEach((r,i)=>{const el=r.el;const name=el.querySelector('.bi').value.trim(),p=+el.querySelector('.bp').value,q=+el.querySelector('.bq').value;
+      if(!name&&!el.querySelector('.bp').value&&!el.querySelector('.bq').value)return;
+      if(!r.itemId||!(p>0)||!(q>0)){bad.push(i+1);return}
+      recs.push({id:Date.now().toString(36)+i+Math.random().toString(36).slice(2,6),charId:c?.id||null,itemId:r.itemId,side:st.side,price:p,qty:Math.round(q),hq:!!(ITEM[r.itemId].canHq&&el.querySelector('.bhq').checked),
+        world,tax,time:new Date(el.querySelector('.bt').value).getTime()||Date.now(),note:'批次登記',ret})});
+    if(bad.length)return toast(`第 ${bad.join('、')} 列不完整：要從清單選物品，並填單價和數量`);
+    if(!recs.length)return toast('還沒有填任何一列');
+    pushUndo(`批次登記 ${recs.length} 筆`);S.journal.push(...recs);lsSet('aex_lastworld',world);saveJournal();closeModal();
+    toast(`已登記 ${recs.length} 筆，可按「復原」`);if(location.hash.startsWith('#/journal'))route();else location.hash='#/journal';
+  };
+}
+function closeModal(){$('#modal').style.display='none';$('#mbox').innerHTML='';$('#mbox').style.width=''}
 
 /* 交易紀錄本的按鈕事件 */
 document.addEventListener('click',async ev=>{
@@ -18144,6 +18239,7 @@ document.addEventListener('click',async ev=>{
   if(el=t.closest('[data-jview]')){S.jview=el.dataset.jview;lsSet('aex_jview',S.jview);route();return}
   if(t.closest('[data-charadd]')){openChar();return}
   if(t.closest('[data-retadd]')){addRetainer();return}
+  if(t.closest('[data-batch]')){openBatch();return}
   if(el=t.closest('[data-jfdays]')){setJF({days:+el.dataset.jfdays});return}
   if(el=t.closest('[data-jfside]')){setJF({side:el.dataset.jfside});return}
   if(t.closest('[data-jfmore]')){S.jlimit+=JT_PAGE;drawJT();return}
