@@ -16745,6 +16745,19 @@ async function loadMain(withOverlay){
   hideOverlay();
 }
 
+const hm=ms=>new Date(ms).toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false});
+const lastUpload=()=>Math.max(0,...Object.values(S.upload||{}).filter(Number.isFinite));
+function noteUpload(w,ts){if(ts>(S.upload[w]||0))S.upload[w]=ts}
+function renderUpd(){
+  const el=$('#upd');if(!el)return;
+  const manual=S.manualT&&S.manualT>(S.snapT||0);const main=manual?S.manualT:(S.snapT||S.updated);
+  const up=lastUpload();
+  el.innerHTML=main?`${manual?'手動刷新':S.snapT?'自動更新':'更新'} ${hm(main)}${up?`<span style="margin:0 6px;opacity:.5">・</span>玩家上傳 ${hm(up)}`:''}`:'—';
+  el.title=[S.snapT?`自動更新 ${hm(S.snapT)}：雲端每 30 分鐘（整點、半點）整理一次行情`:'',
+    S.manualT?`手動刷新 ${hm(S.manualT)}：按「重新整理」直接向 Universalis 讀取`:'',
+    up?`玩家上傳 ${hm(up)}：玩家最後一次把市場資料上傳到 Universalis 的時間（${ago(up)}）`:'',
+    '個股頁每次打開都會即時讀取最新資料'].filter(Boolean).join('\n');
+}
 async function fetchSnapshot(){
   const r=await fetch(SNAP_URL+'?v='+Math.floor(Date.now()/60000),{cache:'no-cache'});
   if(!r.ok)throw new Error('snapshot HTTP '+r.status);
@@ -16757,11 +16770,11 @@ function applySnapshot(d){
     S.hist[id]={t:nowMs,snap:true,raw:h.raw,removed:h.removed,e:h.e.map(r=>({t:d.now-r[0],p:r[1],q:r[2],hq:!!r[3],w:r[4],b:d.buyers[r[5]]}))};
   });
   S.tax={};Object.entries(d.tax||{}).forEach(([w,v])=>S.tax[w]=v);
-  S.upload={};Object.entries(d.upload||{}).forEach(([w,v])=>S.upload[w]=v);
+  Object.entries(d.upload||{}).forEach(([w,v])=>noteUpload(w,v));
   S.snapTicker=d.ticker||[];S.updated=d.t;S.memo.clear();
 }
 async function trySnapshot(){
-  try{const d=await fetchSnapshot();if(d&&d.v===1&&Date.now()-d.t<SNAP_MAX_AGE){if(!S.snapT||d.t>S.snapT)applySnapshot(d);return true}}
+  try{const d=await fetchSnapshot();if(d&&d.v===1&&Date.now()-d.t<SNAP_MAX_AGE){if((!S.snapT||d.t>S.snapT)&&d.t>(S.manualT||0))applySnapshot(d);return true}}
   catch(e){console.warn('snapshot',e)}
   return false;
 }
@@ -16780,7 +16793,7 @@ async function loadUpload(){
     try{const d=await getJSON(`${API}/v2/aggregated/${enc(DC)}/${c.join(',')}`,{persist:false});
       (d?.results||[]).forEach(r=>(r.worldUploadTimes||[]).forEach(u=>{up[u.worldId]=Math.max(up[u.worldId]||0,u.timestamp)}))}catch(e){}
   }));
-  S.upload=up;
+  Object.entries(up).forEach(([w,t])=>noteUpload(w,t));
 }
 
 /* ========== 計算 ========== */
@@ -17041,8 +17054,7 @@ function renderShell(){
   // 手機版：側欄頁尾移到頁面最下方；目前分頁捲到分頁列中間
   {const f=$('#nav .foot');$('#mfoot').innerHTML=f?f.innerHTML.replace(/<br>/g,'・'):''}
   if(matchMedia('(max-width:900px)').matches){const nv=$('#nav'),a=nv.querySelector('a.on');if(a)nv.scrollLeft=a.offsetLeft-nv.clientWidth/2+a.offsetWidth/2}
-  $('#upd').textContent=S.updated?(S.snapMode?'行情時間 ':'更新 ')+new Date(S.updated).toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'}):'—';
-  $('#upd').title=S.snapMode?'行情由雲端每 30 分鐘整理一次；個股頁會再即時讀取最新資料':'';
+  renderUpd();
 }
 const star=id=>`<span class="star ${S.watch.includes(id)?'on':''}" data-star="${id}" title="自選股">★</span>`;
 const nameCell=(id,showStar=true)=>{const it=ITEM[id];return `<div class="name">${showStar?star(id):''}${ico(it)}<span title="${esc(it.n)}">${esc(it.n)}</span>${mainQ(id)?'<span class="hq">HQ</span>':''}</div>`};
@@ -17735,13 +17747,16 @@ const SCAN_COOLDOWN=10*60*1000;
 const scanAge=c=>Math.min(S.detect[c.id]?.t||0,c.rets?.length?(S.rsnap[c.id]?.t||0):Infinity);
 const scanWait=c=>Math.max(0,SCAN_COOLDOWN-(Date.now()-scanAge(c)));
 async function changedItemsSince(t){
-  if(!t)return null;const ids=new Set();
+  // 每服 1 個請求：順便更新「玩家最後上傳時間」；再判斷能不能只查有變動的物品
+  const ids=new Set();let full=!t;
   for(const [w] of WORLDS){
-    let d;try{d=await getJSON(`${API}/v2/extra/stats/most-recently-updated?world=${w}&entries=200`,{persist:false,ttl:0})}catch{return null}
-    const it=d?.items||[];if(it.length>=200&&Math.min(...it.map(x=>x.lastUploadTime))>t)return null;  // 200 筆沒蓋到上次掃描 → 全掃
+    let d;try{d=await getJSON(`${API}/v2/extra/stats/most-recently-updated?world=${w}&entries=200`,{persist:false,ttl:0})}catch{full=true;continue}
+    const it=d?.items||[];if(it.length)noteUpload(w,Math.max(...it.map(x=>x.lastUploadTime)));
+    if(full)continue;
+    if(it.length>=200&&Math.min(...it.map(x=>x.lastUploadTime))>t){full=true;continue}  // 200 筆沒蓋到上次掃描 → 全掃
     it.forEach(x=>{if(x.lastUploadTime>=t&&ITEM[x.itemID])ids.add(x.itemID)});
   }
-  return [...ids];
+  return full?null:[...ids];
 }
 const SCANP={done:0,total:0,msg:''};
 async function scanChars(chars){
@@ -17752,7 +17767,7 @@ async function scanChars(chars){
     const since=Math.min(...chars.map(scanAge));
     const ids=await changedItemsSince(since?since-120000:0);   // null＝全部物品
     await Promise.all([scanBuys(chars,ids),rc.length?scanRetainers(rc,ids):null]);
-  }finally{lsSet('aex_detect',S.detect);lsSet('aex_rsnap',S.rsnap);hideOverlay()}
+  }finally{lsSet('aex_detect',S.detect);lsSet('aex_rsnap',S.rsnap);hideOverlay();renderUpd()}
 }
 function scanMsg(m){SCANP.msg=m;setProgress(SCANP.total?SCANP.done/SCANP.total:0,`${m}・${SCANP.done} / ${SCANP.total} 批`)}
 async function runBatches(tasks){
@@ -17802,8 +17817,9 @@ async function scanRetainers(chars,only){
   const F='items.itemID,items.worldUploadTimes,items.listings.retainerName,items.listings.worldID,items.listings.pricePerUnit,items.listings.quantity,items.listings.hq';
   scanMsg('雇員上架');
   await runBatches(chunk(only||ITEMS.map(it=>it.id),100).map(c=>[`${API}/v2/${enc(DC)}/${c.join(',')}?listings=999&entries=0&fields=${F}`,
-    d=>Object.values(itemsOf(d)).forEach(it=>(it.listings||[]).forEach(l=>{const m=rmap.get(rkey(l.worldID,l.retainerName));
-      if(m)cur[m.c.id].push({itemId:it.itemID,p:l.pricePerUnit,q:l.quantity,hq:!!l.hq,world:l.worldID,ret:m.r.name,seen:it.worldUploadTimes?.[l.worldID]||Date.now()})})),
+    d=>Object.values(itemsOf(d)).forEach(it=>{(it.listings||[]).forEach(l=>{const m=rmap.get(rkey(l.worldID,l.retainerName));
+      if(m)cur[m.c.id].push({itemId:it.itemID,p:l.pricePerUnit,q:l.quantity,hq:!!l.hq,world:l.worldID,ret:m.r.name,seen:it.worldUploadTimes?.[l.worldID]||Date.now()})});
+      Object.entries(it.worldUploadTimes||{}).forEach(([w,ts])=>{if(WN[w])noteUpload(+w,ts)})}),
     ()=>c.forEach(id=>failed.add(id))]),'');
   // 上次快照有、這次不見的掛單 → 找同服、同價、同量、同品質、在上次看到之後的成交
   const key=l=>[lc(l.ret),l.world,l.itemId,l.hq?1:0,l.p,l.q].join('|');
@@ -17921,7 +17937,7 @@ function detectPanel(){
   const pending=rows.filter(r=>!r.added&&!r.ign&&!r.x.amb);const ambN=rows.filter(r=>!r.added&&!r.ign&&r.x.amb).length;
   const showAll=S.showDetAll;const list=showAll?rows:pending;
   const noRet=chars.filter(c=>!c.rets?.length);
-  return `<div class="panel" style="margin-bottom:14px"><h2>自動偵測交易<span class="muted">${chars.length>1?chars.length+' 個角色・':''}買入近 7 天・${last?'上次掃描 '+ago(last):'尚未掃描'}</span>
+  return `<div class="panel" style="margin-bottom:14px"><h2>自動偵測交易<span class="muted">${chars.length>1?chars.length+' 個角色・':''}買入近 7 天・${last?'上次掃描 '+ago(last):'尚未掃描'}${(ws=>ws.length?'・玩家上傳：'+ws.map(w=>`${WN[w]} ${ago(S.upload[w])}`).join('、'):'')([...new Set(chars.flatMap(c=>[c.world,...(c.rets||[]).map(r=>r.world)]))].filter(w=>S.upload[w]))}</span>
     <span style="margin-left:auto;display:flex;gap:6px">
       ${rows.length?`<button class="btn sm" data-detall="1">${showAll?'只看未處理':'顯示全部（含已加入／略過）'}</button>`:''}
       ${pending.length?`<button class="btn sm" data-detimport="all" ${ambN?`title="${ambN} 筆同名待確認不會自動加入"`:''}>全部加入（${pending.length}）</button>`:''}
@@ -18354,9 +18370,13 @@ $('#scope').onchange=ev=>setScope(+ev.target.value);
 window.addEventListener('hashchange',()=>{$('#view').scrollTop=0;document.querySelector('main').scrollTop=0;if(window.scrollY)window.scrollTo(0,0);route()});
 let rsz;window.addEventListener('resize',()=>{clearTimeout(rsz);rsz=setTimeout(route,200)});
 bindSearch($('#q'),$('#dd'),it=>{$('#q').value='';location.hash='#/item/'+it.id});
-$('#refresh').onclick=async()=>{pruneCache(true);MEM.clear();S.hist30={};
-  if(S.snapMode){showOverlay('重新整理','讀取最新的雲端行情');S.snapT=0;const ok=await trySnapshot();hideOverlay();if(ok){loadTicker();route();return}S.snapMode=false}
-  S.hist={};await loadMain(true);loadTicker();loadTax();loadUpload().then(()=>location.hash.startsWith('#/servers')&&route());route()};
+$('#refresh').onclick=async()=>{
+  if(S.manualT&&Date.now()-S.manualT<60000)return toast('剛刷新過，1 分鐘後再試');
+  pruneCache(true);MEM.clear();S.hist30={};S.histL={};S.hist={};
+  try{await loadMain(true);showOverlay('手動刷新','讀取稅率與玩家上傳時間');await Promise.all([loadTax(),loadUpload()])}finally{hideOverlay()}
+  S.manualT=Date.now();S.updated=S.manualT;
+  const sm=S.snapMode;S.snapMode=false;try{await loadTicker()}finally{S.snapMode=sm}
+  toast('已直接向 Universalis 讀取最新資料');route()};
 
 /* ========== 啟動 ========== */
 (async function init(){
