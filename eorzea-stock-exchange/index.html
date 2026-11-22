@@ -120,12 +120,13 @@ canvas{display:block;width:100%}
 .prog{height:8px;background:#1d2431;border-radius:4px;overflow:hidden;margin-top:12px}
 .prog i{display:block;height:100%;width:0;background:var(--gold);transition:width .2s}
 #modal{position:fixed;inset:0;background:#06080ccc;display:none;place-items:center;z-index:90}
-#modal .box{width:520px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
+#modal .box{width:520px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;max-height:calc(100vh - 32px);overflow:auto;overscroll-behavior:contain}
+.bactions{position:sticky;bottom:-20px;z-index:3;display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px -20px -20px;padding:12px 20px;background:var(--panel);border-top:1px solid var(--line)}
 .form{display:grid;grid-template-columns:90px 1fr;gap:10px 12px;align-items:center}
 .form input,.form select,.form textarea{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 9px;width:100%}
 .form .row2{display:flex;gap:8px;align-items:center}
 .brow.flash{animation:bflash .6s}@keyframes bflash{0%{background:#3a2f14}100%{background:transparent}}
-.brow{display:grid;grid-template-columns:minmax(0,1.6fr) auto 74px 110px minmax(0,1fr) 116px auto auto;gap:6px;align-items:center;margin-bottom:6px}
+.brow{display:grid;grid-template-columns:minmax(0,2fr) auto 74px 120px 130px 54px auto auto;gap:6px;align-items:center;margin-bottom:6px}
 .brow .bs{grid-column:1/-1;margin:-3px 0 2px;min-height:0}.brow .bs:empty{display:none}.brow.bhead{font-size:12px;color:var(--muted);margin-bottom:2px}
 .brow input{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 9px;width:100%}
 .brow .search input{padding-left:9px}.brow .search::before{display:none}.brow .dropdown{top:36px}
@@ -239,7 +240,8 @@ table.quote td,table.quote th{white-space:nowrap}
   #modal{place-items:end center}
   #modal .box{width:100%;max-height:92vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px 14px calc(16px + env(safe-area-inset-bottom))}
   .form{grid-template-columns:76px 1fr;gap:10px}
-  .brow{grid-template-columns:auto minmax(0,1fr) minmax(0,1fr);padding:8px 0;border-bottom:1px solid var(--line)}.brow .search{grid-column:1/-1;order:0;flex:none}.brow.bhead{display:none}.brow .bb{grid-column:1/3}
+  .brow{grid-template-columns:auto minmax(0,1fr) minmax(0,1fr);padding:8px 0;border-bottom:1px solid var(--line)}.brow .search{grid-column:1/-1;order:0;flex:none}.brow.bhead{display:none}.brow .bt{grid-column:1/-1}
+  .bactions{bottom:calc(-16px - env(safe-area-inset-bottom));margin:8px -14px calc(-16px - env(safe-area-inset-bottom));padding:10px 14px calc(10px + env(safe-area-inset-bottom))}
   #overlay .box{width:calc(100vw - 32px)}
   /* 個股頁 */
   .item-head{flex-wrap:wrap;gap:10px}
@@ -18292,10 +18294,10 @@ function openBatch(){
     <div id="btaxl">預設稅率 %</div><div class="row2"><input id="btax" type="number" min="0" max="10" step="0.5" value="5" style="width:90px"><span class="note" id="btaxn"></span></div>
   </div>
   <div class="note" id="bhelp" style="margin:12px 0 6px"></div>
-  <div class="brow bhead"><div>道具名</div><div></div><div>數量</div><div id="bph"></div><div id="bbh"></div><div>交易時間</div><div></div><div></div></div>
+  <div class="brow bhead"><div>道具名</div><div></div><div>數量</div><div id="bph"></div><div>交易時間</div><div style="grid-column:span 3">複製幾列</div></div>
   <div id="brows"></div>
-  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px"><button class="btn sm" id="badd">＋ 再加 5 列</button><span class="num" id="btotal" style="margin-left:auto"></span></div>
-  <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px"><button class="btn" id="bcancel">取消</button><button class="btn primary" id="bsave">全部儲存</button></div>`;
+  <div class="bactions"><button class="btn sm" id="badd">＋ 再加 5 列</button><span class="num" id="btotal" style="margin-left:auto"></span>
+    <button class="btn" id="bcancel">取消</button><button class="btn primary" id="bsave">全部儲存</button></div>`;
   $('#modal').style.display='grid';
   const sell=()=>st.side==='sell';
   const fillRets=()=>{const c=charOf($('#bchar').value);const rs=c?.rets||[];
@@ -18306,10 +18308,10 @@ function openBatch(){
   const sideUI=()=>{const s=sell();
     $('#bretl').style.display=$('#bretw').style.display=s?'':'none';$('#bworldl').textContent=s?'上架伺服器':'購買伺服器';
     $('#btaxn').textContent=s?'稅率依城市不同（0%／3%／5%），每列會從實收總價自動判斷；判斷不出來才用這個':'買方另外支付';
-    $('#bph').textContent=s?'實收總價':'單價';$('#bbh').textContent=s?'購買人（選填）':'';
-    $('#bhelp').innerHTML=s?'對照遊戲中雇員的「出售記錄」照抄：<b>數量、價格（實收總價）、購買人、交易時間</b>（例：11/22 15:41）。儲存時會到 Universalis 比對，對到的會用精確單價與時間。'
+    $('#bph').textContent=s?'實收總價':'單價';
+    $('#bhelp').innerHTML=s?'對照遊戲中雇員的「出售記錄」照抄：<b>數量、價格（實收總價）、交易時間</b>（例：11/22 15:41）。儲存時會到 Universalis 比對，對到的會用精確單價與時間。'
       :'每列一筆，填數量、單價、交易時間（例：11/22 15:41，留空＝現在）。';
-    st.rows.forEach(r=>{r.el.querySelector('.bp').placeholder=s?'實收總價':'單價';r.el.querySelector('.bb').style.visibility=s?'visible':'hidden'});tot()};
+    st.rows.forEach(r=>{r.el.querySelector('.bp').placeholder=s?'實收總價':'單價'});tot()};
   const rowCalc=r=>{const el=r.el;const q=+el.querySelector('.bq').value,v=+el.querySelector('.bp').value,t=+$('#btax').value||0;
     if(!r.itemId||!(q>0)||!(v>0))return null;
     if(sell()){const x=inferTax(v,q,t);return {unit:x.unit,amt:v,tax:x.t,exact:x.exact}}
@@ -18323,16 +18325,18 @@ function openBatch(){
     el.innerHTML=`<div class="search" style="flex:none"><input class="bi" placeholder="道具名" autocomplete="off"><div class="dropdown"></div></div>
       <label class="bhqw" style="visibility:hidden;white-space:nowrap"><input type="checkbox" class="bhq" style="width:auto"> HQ</label>
       <input class="bq" type="number" min="1" placeholder="數量"><input class="bp" type="number" min="0" placeholder="${sell()?'實收總價':'單價'}">
-      <input class="bb" placeholder="購買人" style="visibility:${sell()?'visible':'hidden'}"><input class="bt" placeholder="11/22 15:41" inputmode="numeric">
-      <button class="btn sm bc" title="複製這一列到下一列（相同道具、數量、價格大量賣出時用）">⧉ 複製</button><button class="btn sm bx" title="清除這列">✕</button><div class="bs note"></div>`;
+      <input class="bt" placeholder="11/22 15:41" inputmode="numeric">
+      <input class="bn" type="number" min="1" max="99" value="1" title="要複製幾列"><button class="btn sm bc" title="把這一列複製到下面（相同道具、數量、價格大量賣出時用），左邊填要複製幾列">⧉ 複製</button><button class="btn sm bx" title="清除這列">✕</button><div class="bs note"></div>`;
     const row={el,itemId:null};el._row=row;st.rows.push(row);if(after)after.after(el);else $('#brows').appendChild(el);
     bindSearch(el.querySelector('.bi'),el.querySelector('.dropdown'),it=>{row.itemId=it.id;el.querySelector('.bi').value=it.n;el.querySelector('.bhqw').style.visibility=it.canHq?'visible':'hidden';el.querySelector('.bhq').checked=mainQ(it.id);el.querySelector('.bq').focus();tot()});
     el.querySelector('.bi').addEventListener('input',()=>{row.itemId=null;tot()});
     el.querySelectorAll('.bq,.bp').forEach(x=>x.oninput=tot);
     el.querySelector('.bt').onchange=()=>{const t=el.querySelector('.bt');t.style.borderColor=t.value.trim()&&parseGameTime(t.value)==null?'var(--up)':''};
-    el.querySelector('.bc').onclick=()=>{addRows(1,el,row);const n=el.nextElementSibling;n.classList.add('flash');setTimeout(()=>n.classList.remove('flash'),600)};
+    el.querySelector('.bc').onclick=()=>{const k=Math.max(1,Math.min(99,Math.round(+el.querySelector('.bn').value)||1));let a=el;const made=[];
+      for(let j=0;j<k;j++){addRows(1,a,row);a=a.nextElementSibling;made.push(a)}
+      made.forEach(n=>{n.classList.add('flash');setTimeout(()=>n.classList.remove('flash'),600)});toast(`已複製 ${k} 列`);tot()};
     if(src){const se=src.el;row.itemId=src.itemId;
-      ['.bi','.bq','.bp','.bb','.bt'].forEach(q=>el.querySelector(q).value=se.querySelector(q).value);
+      ['.bi','.bq','.bp','.bt'].forEach(q=>el.querySelector(q).value=se.querySelector(q).value);
       el.querySelector('.bhq').checked=se.querySelector('.bhq').checked;el.querySelector('.bhqw').style.visibility=se.querySelector('.bhqw').style.visibility;tot()}
     el.querySelector('.bx').onclick=()=>{row.itemId=null;el.querySelectorAll('input').forEach(x=>{if(x.type==='checkbox')x.checked=false;else x.value=''});el.querySelector('.bhqw').style.visibility='hidden';tot()};
   }};
@@ -18350,7 +18354,7 @@ function openBatch(){
       if(!any)return;const cc=rowCalc(r);const t=parseGameTime(el.querySelector('.bt').value);
       if(!cc||t==null){bad.push(i+1);return}
       rows.push({i,itemId:r.itemId,hq:!!(ITEM[r.itemId].canHq&&el.querySelector('.bhq').checked),q:Math.round(+el.querySelector('.bq').value),v:+el.querySelector('.bp').value,
-        buyer:sell()?el.querySelector('.bb').value.trim():(c?.name||''),t,unit:cc.unit,tax:cc.tax})});
+        buyer:sell()?'':(c?.name||''),t,unit:cc.unit,tax:cc.tax})});
     if(bad.length)return toast(`第 ${bad.join('、')} 列不完整：要從清單選道具，填數量、${sell()?'實收總價':'單價'}，時間格式像 11/22 15:41`);
     if(!rows.length)return toast('還沒有填任何一列');
     // 到 Universalis 比對成交紀錄
