@@ -75,6 +75,7 @@ h2 .muted{font-weight:400;font-size:12px}
 .grid{display:grid;gap:14px}
 .g6{grid-template-columns:repeat(6,minmax(0,1fr))}.g3{grid-template-columns:repeat(3,minmax(0,1fr))}.g2{grid-template-columns:1fr 1fr}
 .g3 .name span{max-width:130px}
+.panel{overflow-x:auto}
 .compact td,.compact th{white-space:nowrap;font-size:13px;padding:4px 5px}.compact td.b{max-width:90px;overflow:hidden;text-overflow:ellipsis}.panel{min-width:0}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer;position:relative;overflow:hidden}
 .card:hover{border-color:#3a4458}
@@ -171,7 +172,7 @@ td.fu,span.fu{animation:fuc 2.4s}td.fd,span.fd{animation:fdc 2.4s}
 #mbar .mb-et{margin-left:auto;display:flex;align-items:center;gap:8px}#mbar .mb-et b{color:var(--gold);font-size:15px}
 .qbig{display:flex;flex-direction:column;margin-left:20px}.qbig .p{font-size:32px;font-weight:800;line-height:1.1;padding:0 4px;border-radius:4px}
 .qgrid{display:grid;grid-template-columns:repeat(4,auto);gap:2px 18px;margin-left:18px;font-size:13px}
-.qgrid div{display:flex;gap:8px;justify-content:space-between}
+.qgrid div{display:flex;gap:8px;justify-content:space-between}.qgrid div>*{white-space:nowrap}
 table.quote td,table.quote th{white-space:nowrap}
 .news{display:grid;grid-template-columns:96px 70px 1fr;gap:10px;align-items:center;padding:6px 4px;border-bottom:1px solid #1a2030;cursor:pointer;font-size:13px}
 .news2{display:grid;grid-template-columns:1fr 1fr;column-gap:24px}
@@ -187,6 +188,19 @@ table.quote td,table.quote th{white-space:nowrap}
 .toast{position:fixed;right:20px;bottom:20px;background:var(--panel2);border:1px solid var(--line);padding:10px 14px;border-radius:8px;z-index:120}
 
 #mfoot{display:none}
+/* ========== 中等寬度（901～1280px，例如直立螢幕、半螢幕視窗） ========== */
+@media (min-width:901px) and (max-width:1280px){
+  .g2,.news2{grid-template-columns:minmax(0,1fr)}
+  .g3{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .g6 .card .v{font-size:19px}
+}
+@media (min-width:901px) and (max-width:1100px){
+  .g6{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .grid[style*="repeat(5"]{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+  .name .code{display:none}
+  .item-head{flex-wrap:wrap;row-gap:10px}.item-head .meta{min-width:0}.qgrid div{white-space:nowrap}.qbig{margin-left:10px}
+  .grid[style*="grid-template-columns:1fr 340px"],.grid[style*="grid-template-columns:1fr 280px"],.grid[style*="grid-template-columns:280px 1fr"]{grid-template-columns:minmax(0,1fr)!important}
+}
 /* ========== 手機版（寬度 900px 以下） ========== */
 @media (max-width:900px){
   html,body{height:auto}
@@ -17133,7 +17147,7 @@ const nameCell=(id,showStar=true)=>{const it=ITEM[id];return `<div class="name">
 const LIMIT=10;
 const codeOf=id=>String(id).padStart(5,'0');
 const isLimUp=c=>c!=null&&c>=LIMIT,isLimDn=c=>c!=null&&c<=-LIMIT;
-function pctS(x){return pct(x)+(isLimUp(x)?'<span class="lim lu">漲停</span>':isLimDn(x)?'<span class="lim ld">跌停</span>':'')}
+function pctS(x){return '<span style="white-space:nowrap">'+pct(x)+(isLimUp(x)?'<span class="lim lu">漲停</span>':isLimDn(x)?'<span class="lim ld">跌停</span>':'')+'</span>'}
 S.lastPx={};
 function fx(id,v){const k=id+'|'+S.scope;const p=S.lastPx[k];S.lastPx[k]=v;return p!=null&&v!=null&&p!==v?(v>p?' fu':' fd'):''}
 const pc=(v,ref)=>`<td class="num ${v==null||ref==null?'':cls(v-ref)}">${fmt(v)}</td>`;
