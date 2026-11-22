@@ -226,7 +226,7 @@ button.mini{font-size:11px;padding:2px 8px;border-radius:6px;cursor:pointer;colo
 <div class="sub">繁中服道具搜尋 × 陸行鳥市場即時價格：查怎麼取得、算合成成本、整理購物清單、看什麼好賣</div>
 
 <div class="topbar">
-  <div class="tabs"><button data-tab="find" class="on">🔍 搜尋</button><button data-tab="calc">成本計算</button><button data-tab="batch">購物清單 <span class="badge" id="bBadge"></span></button><button data-tab="star">⭐ 追蹤 <span class="badge" id="stBadge"></span></button><button data-tab="alert">🔔 提醒 <span class="badge" id="aBadge"></span></button><button data-tab="vent">雇員探索</button><span class="more"><button class="morebtn" id="moreBtn">更多 ▾</button><div class="moremenu" id="moreMenu" hidden><button data-tab="mkt">市場趨勢・該賣什麼</button><button data-tab="flower">花卉</button><button data-tab="gear">配裝</button></div></span></div>
+  <div class="tabs"><button data-tab="find" class="on">🔍 搜尋</button><button data-tab="calc">成本計算</button><button data-tab="mkt">市場趨勢</button><button data-tab="batch">購物清單 <span class="badge" id="bBadge"></span></button><button data-tab="star">⭐ 追蹤 <span class="badge" id="stBadge"></span></button><button data-tab="alert">🔔 提醒 <span class="badge" id="aBadge"></span></button><button data-tab="vent">雇員探索</button><span class="more"><button class="morebtn" id="moreBtn">更多 ▾</button><div class="moremenu" id="moreMenu" hidden><button data-tab="flower">花卉</button><button data-tab="gear">配裝</button></div></span></div>
   <div class="tools"><button class="wbtn" id="wBtn" title="切換版面寬度"></button><button class="setbtn" id="taxBtn" title="陸行鳥每台伺服器、每個城市本週的賣出稅">％ 本週稅率</button><button class="setbtn" id="syncBtn" title="把清單、庫存、雇員等資料帶到另一台電腦">⇄ 備份／搬家</button><button class="setbtn" id="setBtn">⚙ 設定</button></div>
   <div class="card" id="taxPanel" hidden style="margin-top:10px">
     <div class="row" style="justify-content:space-between"><h2>本週賣出稅率（陸行鳥）</h2><button id="taxReload">重新整理</button></div>
@@ -1859,8 +1859,8 @@ $('#moreBtn').addEventListener('click', e => { e.stopPropagation(); $('#moreMenu
 document.addEventListener('click', e => { if (!e.target.closest('.more')) $('#moreMenu').hidden = true; });
 function showTab(t) {
   document.querySelectorAll('.tabs button[data-tab]').forEach(x => x.classList.toggle('on', x.dataset.tab === t));
-  const inMore = ['mkt', 'flower', 'gear'].includes(t), mb = $('#moreBtn');
-  mb.classList.toggle('on', inMore); mb.textContent = inMore ? `${{ mkt: '市場趨勢', flower: '花卉', gear: '配裝' }[t]} ▾` : '更多 ▾'; $('#moreMenu').hidden = true;
+  const inMore = ['flower', 'gear'].includes(t), mb = $('#moreBtn');
+  mb.classList.toggle('on', inMore); mb.textContent = inMore ? `${{ flower: '花卉', gear: '配裝' }[t]} ▾` : '更多 ▾'; $('#moreMenu').hidden = true;
   ['find', 'calc', 'batch', 'mkt', 'flower', 'gear', 'alert', 'star', 'vent'].forEach(k => $('#tab-' + k).hidden = t !== k);
   window.scrollTo(0, 0);
 }
