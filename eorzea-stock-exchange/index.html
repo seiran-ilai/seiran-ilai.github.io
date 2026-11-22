@@ -18041,7 +18041,7 @@ async function renderJournal(tok){
   const b=calcBook(recs);let mv=0,unr=0;
   const hold=b.pos.filter(p=>p.qty>0).map(p=>{const st=statsOf(S.hist[p.itemId]?.e||[],p.hq,null);const price=st.price;const v=price!=null?price*p.qty:null;
     if(v!=null){mv+=v;unr+=v-p.cost}return {...p,price,v,u:v!=null?v-p.cost:null}});
-  const ret=b.totalBuy?(b.realized+unr)/b.totalBuy*100:null;
+  const net=b.totalSell-b.totalBuy;
   const cost=hold.reduce((s,p)=>s+p.cost,0);
   const merged=S.jview==='all';
   const viewName=merged?'全部角色（合併）':S.jview==='none'?'未指定角色':esc(charName(S.jview));
@@ -18050,17 +18050,16 @@ async function renderJournal(tok){
   ${retPanel()}
   ${detectPanel()}
   <div class="tabs" style="flex-wrap:wrap"><button class="btn primary" data-log="">＋ 手動新增</button><button class="btn" data-batch="1" title="一次輸入多筆，例如對照雇員的出售歷史補登">批次登記</button><button class="btn" id="jexp">匯出 JSON</button><label class="btn">匯入 JSON<input type="file" id="jimp" accept=".json" hidden></label></div>
-  <div class="grid" style="grid-template-columns:repeat(6,minmax(0,1fr));margin-bottom:14px">
-    <div class="card"><div class="t">累計買入成本（含稅）</div><div class="v num">${fmt(b.totalBuy)}</div></div>
-    <div class="card"><div class="t">累計賣出（實收）</div><div class="v num down">${fmt(b.totalSell)}</div>${b.noCostAmt?`<div class="note" title="賣出時持倉不足的部分（例如自己製作的成品），以實收全額計入已實現損益">含自製／無成本 ${fmt(b.noCostAmt)}</div>`:''}</div>
-    <div class="card"><div class="t">持倉成本</div><div class="v num">${fmt(cost)}</div></div>
-    <div class="card"><div class="t">持倉市值</div><div class="v num">${fmt(mv)}</div></div>
-    <div class="card"><div class="t">未實現／已實現損益</div><div class="v">${signed(unr)}</div><div>${signed(b.realized)}</div>${b.usedCost?`<div class="note" title="持倉標記為「用掉／拿去製作」的成本，已從已實現損益扣除">已扣材料成本 ${fmt(b.usedCost)}</div>`:''}</div>
-    <div class="card main"><div class="t">總報酬率</div><div class="v">${pct(ret)}</div><div class="note">（已實現＋未實現）÷ 累計買入成本</div></div>
+  <div class="grid" style="grid-template-columns:repeat(5,minmax(0,1fr));margin-bottom:14px">
+    <div class="card"><div class="t">累計買入（支出，含稅）</div><div class="v num up">${fmt(b.totalBuy)}</div></div>
+    <div class="card"><div class="t">已實現收益（賣出實收）</div><div class="v num down">${fmt(b.totalSell)}</div></div>
+    <div class="card"><div class="t">淨收支（賣出－買入）</div><div class="v">${signed(net)}</div></div>
+    <div class="card"><div class="t">持倉市值</div><div class="v num">${fmt(mv)}</div><div class="note">持倉成本 ${fmt(cost)}</div></div>
+    <div class="card main"><div class="t">總計（淨收支＋持倉市值）</div><div class="v">${signed(net+mv)}</div><div class="note">把手上的東西照現價算進去</div></div>
   </div>
-  <div class="panel" style="margin-bottom:14px"><h2>持倉${merged&&S.chars.length>1?'<span class="muted">合併所有角色</span>':''}<span style="margin-left:auto;display:flex;gap:6px;font-weight:400">${S.undo.length?`<button class="btn sm" data-undo="1" title="可連續復原最近 ${S.undo.length} 個動作">↶ 復原：${esc(S.undo[S.undo.length-1].label)}</button>`:''}${hold.length?'<button class="btn sm" data-holdclear="1">全部刪除持倉</button>':''}</span></h2><table class="t-hold"><tr><th>名稱</th><th>數量</th><th>平均成本</th><th>現價</th><th>市值</th><th>未實現損益</th><th>報酬率</th><th>已實現</th><th></th></tr>
-  ${hold.map(p=>`<tr><td><div class="name">${ico(ITEM[p.itemId])}<a href="#/item/${p.itemId}">${esc(ITEM[p.itemId]?.n)}</a>${p.hq?'<span class="hq">HQ</span>':''}</div></td><td class="num">${fmt(p.qty)}</td><td class="num">${fmt(p.cost/p.qty,1)}</td><td class="num">${fmt(p.price)}</td><td class="num">${fmt(p.v)}</td><td>${signed(p.u)}</td><td>${pct(p.u!=null&&p.cost?p.u/p.cost*100:null)}</td><td>${signed(p.realized)}</td><td style="white-space:nowrap"><button class="btn sm" data-holdset="${p.itemId}|${p.hq?1:0}">改數量</button> <button class="btn sm" data-holddel="${p.itemId}|${p.hq?1:0}">刪除</button></td></tr>`).join('')||'<tr><td colspan=9 class="empty">目前沒有持倉</td></tr>'}</table>
-  <p class="note">材料拿去製作、自己用掉或送人時，按「改數量」或「刪除」並選「用掉／拿去製作」，減少部分的成本會計入已實現損益；選「只是修正數量」則不計損益。增加的部分以目前平均成本計入。調整紀錄可以在下方交易紀錄中刪除。</p></div>
+  <div class="panel" style="margin-bottom:14px"><h2>持倉${merged&&S.chars.length>1?'<span class="muted">合併所有角色</span>':''}<span style="margin-left:auto;display:flex;gap:6px;font-weight:400">${S.undo.length?`<button class="btn sm" data-undo="1" title="可連續復原最近 ${S.undo.length} 個動作">↶ 復原：${esc(S.undo[S.undo.length-1].label)}</button>`:''}${hold.length?'<button class="btn sm" data-holdclear="1">全部刪除持倉</button>':''}</span></h2><table class="t-hold"><tr><th>名稱</th><th>數量</th><th>平均成本</th><th>現價</th><th>市值</th><th>未實現損益</th><th>報酬率</th><th>已賣出</th><th></th></tr>
+  ${hold.map(p=>`<tr><td><div class="name">${ico(ITEM[p.itemId])}<a href="#/item/${p.itemId}">${esc(ITEM[p.itemId]?.n)}</a>${p.hq?'<span class="hq">HQ</span>':''}</div></td><td class="num">${fmt(p.qty)}</td><td class="num">${fmt(p.cost/p.qty,1)}</td><td class="num">${fmt(p.price)}</td><td class="num">${fmt(p.v)}</td><td>${signed(p.u)}</td><td>${pct(p.u!=null&&p.cost?p.u/p.cost*100:null)}</td><td class="num">${p.sold?fmt(p.sold):'—'}</td><td style="white-space:nowrap"><button class="btn sm" data-holdset="${p.itemId}|${p.hq?1:0}">改數量</button> <button class="btn sm" data-holddel="${p.itemId}|${p.hq?1:0}">刪除</button></td></tr>`).join('')||'<tr><td colspan=9 class="empty">目前沒有持倉</td></tr>'}</table>
+  <p class="note">自己用掉、拿去製作或記錯時，按「改數量」或「刪除」調整持倉，不影響收益。未實現損益＝市值－平均成本。調整紀錄可以在下方交易紀錄中刪除。</p></div>
   <div class="panel"><h2>交易紀錄<span class="muted">${recs.length} 筆</span>
     <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-weight:400">
       <span class="seg sm">${[[7,'7 天'],[30,'30 天'],[90,'90 天'],[0,'全部']].map(([v,n])=>`<button class="${S.jf.days===v?'on':''}" data-jfdays="${v}">${n}</button>`).join('')}</span>
@@ -18068,7 +18067,7 @@ async function renderJournal(tok){
       <input id="jfq" placeholder="搜尋物品" value="${esc(S.jf.q)}" autocomplete="off" style="background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:4px 9px;width:140px">
     </span></h2>
   <div id="jtable"></div>
-  <p class="note">買入金額＝單價 × 數量 ×（1＋稅率），遊戲中市場稅由買方支付；買入伺服器可以和角色所在伺服器不同（跨服購買）。賣出金額＝單價 × 數量 ×（1－稅率），和遊戲「出售記錄」的實收金額一致（舊紀錄稅率為 0 則不扣）；伺服器欄顯示上架的雇員。損益採平均成本法${merged?'，合併檢視時同一物品跨角色合併計算':''}；材料拿去製作或自己用掉時，在持倉按「改數量」並選「用掉／拿去製作」，成本會從已實現損益扣除。${b.unmatched?`<br>有 ${b.unmatched} 筆賣出超過當時持倉（例如自己製作的成品），超出的部分以實收全額計入已實現損益；如果其實是漏記了買入，補上買入紀錄後就會自動扣成本。`:''}</p></div>`;
+  <p class="note">買入金額＝單價 × 數量 ×（1＋稅率），遊戲中市場稅由買方支付；買入伺服器可以和角色所在伺服器不同（跨服購買）。賣出金額＝單價 × 數量 ×（1－稅率），和遊戲「出售記錄」的實收金額一致（舊紀錄稅率為 0 則不扣）；伺服器欄顯示上架的雇員。損益採平均成本法${merged?'，合併檢視時同一物品跨角色合併計算':''}；已實現收益就是賣出的實收金額（自製成品也算）；賣得好不好看整列底色：比目前股價貴是紅底、便宜是綠底。</p></div>`;
   drawJT();let jfT;$('#jfq').oninput=ev=>{clearTimeout(jfT);jfT=setTimeout(()=>setJF({q:ev.target.value}),200)};
   if($('#rname')){$('#rname').onkeydown=ev=>{if(ev.key==='Enter'&&!ev.isComposing)addRetainer()};
     const rc=$('#rchar');if(rc.tagName==='SELECT')rc.onchange=()=>{const c=charOf(rc.value);if(c)$('#rworld').value=c.world}}
@@ -18086,20 +18085,10 @@ function holdingByChar(itemId,hq){
   const recs=jRecords();const ids=[...new Set(recs.map(r=>r.charId??null))];
   return ids.map(cid=>{const p=calcBook(recs.filter(r=>(r.charId??null)===cid)).pos.find(x=>x.itemId===itemId&&x.hq===hq);return {cid,qty:p?.qty||0}}).filter(x=>x.qty>0);
 }
-// 持倉減少的原因：用掉／製作（成本計入已實現損益）或修正數量（不計損益）
-function askReduceReason(title){return new Promise(res=>{
-  $('#mbox').innerHTML=`<h2>${esc(title)}</h2><p class="note" style="font-size:13px;line-height:1.7">減少的數量是怎麼了？</p>
-    <div style="display:grid;gap:8px;margin-top:10px">
-      <button class="btn primary" data-rr="use" style="text-align:left;padding:10px 14px">用掉／拿去製作<div style="font-weight:400;font-size:12px;opacity:.8">成本計入已實現損益（例如材料做成成品後賣掉，收益＝成品收入－材料成本）</div></button>
-      <button class="btn" data-rr="fix" style="text-align:left;padding:10px 14px">只是修正數量<div class="muted" style="font-size:12px">例如之前記錯、重複登記，不計損益</div></button>
-      <button class="btn" data-rr="" style="justify-self:end">取消</button></div>`;
-  $('#modal').style.display='grid';
-  $('#mbox').onclick=ev=>{const b=ev.target.closest('[data-rr]');if(!b)return;$('#mbox').onclick=null;closeModal();res(b.dataset.rr||null)};
-})}
 function adjustHolding(itemId,hq,target,now=Date.now(),use=false){
   const by=holdingByChar(itemId,hq);const cur=by.reduce((s,x)=>s+x.qty,0);let d=target-cur;if(!d)return 0;
   const mk=(cid,q)=>S.journal.push({id:now.toString(36)+Math.random().toString(36).slice(2,6),charId:cid,itemId,side:'adj',price:0,qty:q,hq,world:charOf(cid)?.world||null,tax:0,time:now,
-    ...(q<0&&use?{use:true}:{}),note:q<0?(use?'用掉／拿去製作':'修正數量'):'手動增加持倉'});
+    ...(q<0&&use?{use:true}:{}),note:q<0?'手動減少持倉':'手動增加持倉'});
   if(d<0){for(const x of by.sort((a,b)=>b.qty-a.qty)){if(!d)break;const take=Math.min(x.qty,-d);mk(x.cid,-take);d+=take}}
   else mk(charOf(S.jview)?S.jview:(by.sort((a,b)=>b.qty-a.qty)[0]?.cid??S.chars[0]?.id??null),d);
   return 1;
@@ -18111,14 +18100,12 @@ document.addEventListener('click',async ev=>{
     const cur=holdingByChar(itemId,hq).reduce((s,x)=>s+x.qty,0);const name=(ITEM[itemId]?.n||itemId)+(hq?' HQ':'');
     const v=prompt(`「${name}」目前持有 ${fmt(cur)}，要改成多少？`,cur);if(v==null)return;const n=Math.round(+v);
     if(!(n>=0))return toast('請輸入 0 以上的數字');if(n===cur)return;
-    let use=false;if(n<cur){const rr=await askReduceReason(`${name}：${fmt(cur)} → ${fmt(n)}`);if(!rr)return;use=rr==='use'}
-    pushUndo(`${name} 數量 ${fmt(cur)} → ${fmt(n)}`);adjustHolding(itemId,hq,n,Date.now(),use);saveJournal();toast(use?'已調整持倉，成本已計入已實現損益':'已調整持倉');route();return}
+    pushUndo(`${name} 數量 ${fmt(cur)} → ${fmt(n)}`);adjustHolding(itemId,hq,n);saveJournal();toast('已調整持倉');route();return}
   if(el=t.closest('[data-holddel]')){const [id,h]=el.dataset.holddel.split('|');const itemId=+id,hq=h==='1';const name=(ITEM[itemId]?.n||itemId)+(hq?' HQ':'');
-    const rr=await askReduceReason(`刪除持倉：${name}`);if(!rr)return;
-    pushUndo(`刪除持倉 ${name}`);adjustHolding(itemId,hq,0,Date.now(),rr==='use');saveJournal();toast(`已刪除持倉 ${name}，可按「復原」`);route();return}
+    pushUndo(`刪除持倉 ${name}`);adjustHolding(itemId,hq,0);saveJournal();toast(`已刪除持倉 ${name}，可按「復原」`);route();return}
   if(t.closest('[data-holdclear]')){const pos=calcBook(jRecords()).pos.filter(p=>p.qty>0);
-    const rr=await askReduceReason(`全部刪除持倉（${pos.length} 項）`);if(!rr)return;
-    pushUndo(`全部刪除持倉（${pos.length} 項）`);const now=Date.now();pos.forEach(p=>adjustHolding(p.itemId,p.hq,0,now,rr==='use'));saveJournal();toast('已清空持倉，可按「復原」');route();return}
+    if(!confirm(`把目前檢視中的 ${pos.length} 項持倉全部歸零？\n交易紀錄會保留，之後可以按「復原」。`))return;
+    pushUndo(`全部刪除持倉（${pos.length} 項）`);const now=Date.now();pos.forEach(p=>adjustHolding(p.itemId,p.hq,0,now));saveJournal();toast('已清空持倉，可按「復原」');route();return}
 });
 /* 交易紀錄表：期間／買賣／物品篩選，按日分組，一次顯示 JT_PAGE 筆 */
 S.jf=Object.assign({days:30,side:'all',q:''},lsGet('aex_jfilter',{}));S.jlimit=50;
