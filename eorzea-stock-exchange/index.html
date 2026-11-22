@@ -109,6 +109,7 @@ canvas{display:block;width:100%}
 .form .row2{display:flex;gap:8px;align-items:center}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
 .seg button{background:transparent;border:0;padding:5px 14px;cursor:pointer}
+.seg button.on{background:var(--line);color:var(--text)}.seg.sm button{padding:3px 10px;font-size:12px}
 .seg button.on.buy{background:#3a1519;color:var(--up)}.seg button.on.sell{background:#10301f;color:var(--down)}
 .empty{color:var(--muted);text-align:center;padding:24px}
 .note{font-size:12px;color:var(--muted)}
@@ -17596,16 +17597,32 @@ function calcBook(recs){
 }
 
 /* 掃描：買入看成交紀錄的 buyerName（全 DC 伺服器，可跨服），賣出看雇員上架是否消失且有對應成交 */
-// 掃描時放寬並行：Universalis 每個 IP 可同時 8 個連線、每秒 25 個請求；買入與雇員上架同時掃，共用一條進度條
+/* 減少對 Universalis 的存取：
+   1. 沿用全站的請求節流（同時 4 個、每秒最多 8 個），不另外加速
+   2. 同一角色 10 分鐘內不重掃（市場資料要有人上傳才會變）
+   3. 再次掃描時先查各伺服器「最近更新的物品」（每服 1 個請求），只要涵蓋到上次掃描，就只查這些有變動的物品 */
+const SCAN_COOLDOWN=10*60*1000;
+const scanAge=c=>Math.min(S.detect[c.id]?.t||0,c.rets?.length?(S.rsnap[c.id]?.t||0):Infinity);
+const scanWait=c=>Math.max(0,SCAN_COOLDOWN-(Date.now()-scanAge(c)));
+async function changedItemsSince(t){
+  if(!t)return null;const ids=new Set();
+  for(const [w] of WORLDS){
+    let d;try{d=await getJSON(`${API}/v2/extra/stats/most-recently-updated?world=${w}&entries=200`,{persist:false,ttl:0})}catch{return null}
+    const it=d?.items||[];if(it.length>=200&&Math.min(...it.map(x=>x.lastUploadTime))>t)return null;  // 200 筆沒蓋到上次掃描 → 全掃
+    it.forEach(x=>{if(x.lastUploadTime>=t&&ITEM[x.itemID])ids.add(x.itemID)});
+  }
+  return [...ids];
+}
 const SCANP={done:0,total:0,msg:''};
 async function scanChars(chars){
-  const old={MAXC:LIM.MAXC,GAP:LIM.GAP};LIM.MAXC=8;LIM.GAP=45;
   Object.assign(SCANP,{done:0,total:0});
   const rc=chars.filter(c=>c.rets?.length);
-  showOverlay(`掃描 ${chars.map(charLabel).join('、')} 的交易紀錄`,'');
+  showOverlay(`掃描 ${chars.map(charLabel).join('、')} 的交易紀錄`,'檢查哪些物品有更新…');
   try{
-    await Promise.all([scanBuys(chars),rc.length?scanRetainers(rc):null]);
-  }finally{Object.assign(LIM,old);lsSet('aex_detect',S.detect);lsSet('aex_rsnap',S.rsnap);hideOverlay()}
+    const since=Math.min(...chars.map(scanAge));
+    const ids=await changedItemsSince(since?since-120000:0);   // null＝全部物品
+    await Promise.all([scanBuys(chars,ids),rc.length?scanRetainers(rc,ids):null]);
+  }finally{lsSet('aex_detect',S.detect);lsSet('aex_rsnap',S.rsnap);hideOverlay()}
 }
 function scanMsg(m){SCANP.msg=m;setProgress(SCANP.total?SCANP.done/SCANP.total:0,`${m}・${SCANP.done} / ${SCANP.total} 批`)}
 async function runBatches(tasks){
@@ -17616,7 +17633,7 @@ async function runBatches(tasks){
   }));
   return fails;
 }
-async function scanBuys(chars){
+async function scanBuys(chars,only){
   // 角色＝名稱＋伺服器。但成交紀錄只有買家名稱、沒有買家所屬伺服器（任何角色都能跨服購買），
   // 所以登記了同名角色（不同伺服器）時無從判斷是誰買的：這筆會列在每個同名角色底下，標「同名待確認」，由使用者選擇歸屬
   const names=new Map();chars.forEach(c=>{const k=lc(c.name);names.set(k,[...(names.get(k)||[]),c])});
@@ -17629,7 +17646,7 @@ async function scanBuys(chars){
   const take=(id,x,w)=>{const cs=names.get(lc(x.buyerName));if(!cs)return;const world=w??x.worldID;
     const amb=cs.length>1;cs.forEach(ch=>found[ch.id].push({itemId:id,t:x.timestamp,p:x.pricePerUnit,q:x.quantity,hq:!!x.hq,world,...(amb?{amb:true}:{})}))};
   scanMsg(lastT?`買入：上次掃描後的新成交`:'買入：全 DC 近 7 天');
-  let fails=await runBatches(chunk(ITEMS.map(it=>it.id),100).map(c=>[`${API}/v2/history/${enc(DC)}/${c.join(',')}?entriesToReturn=999&entriesWithin=${within}&fields=${F}`,
+  let fails=await runBatches(chunk(only||ITEMS.map(it=>it.id),100).map(c=>[`${API}/v2/history/${enc(DC)}/${c.join(',')}?entriesToReturn=999&entriesWithin=${within}&fields=${F}`,
     d=>Object.values(itemsOf(d)).forEach(it=>{const e=it.entries||[];
       // 熱門物品在 DC 範圍內 999 筆蓋不到 7 天，之後改逐服掃描
       if(e.length>=999&&e[e.length-1].timestamp>since){hot.add(it.itemID);return}
@@ -17646,13 +17663,15 @@ async function scanBuys(chars){
     [...(d.found||[]).filter(x=>x.t>=keep),...found[c.id]].forEach(x=>m.set(tradeKey(x),x));
     d.found=[...m.values()].sort((a,b)=>b.t-a.t);if(!fails||!d.t)d.t=Date.now()});
 }
-async function scanRetainers(chars){
+async function scanRetainers(chars,only){
   const rkey=(w,n)=>w+'|'+lc(n);
   const rmap=new Map();chars.forEach(c=>c.rets.forEach(r=>rmap.set(rkey(r.world,r.name),{c,r})));
   const cur={};chars.forEach(c=>cur[c.id]=[]);const failed=new Set();
+  // 只查有變動的物品時，其餘物品的上架沿用上次快照（當作沒查，不判定下架）
+  if(only){const os=new Set(only);chars.forEach(c=>(S.rsnap[c.id]?.list||[]).forEach(l=>{if(!os.has(l.itemId))failed.add(l.itemId)}))}
   const F='items.itemID,items.worldUploadTimes,items.listings.retainerName,items.listings.worldID,items.listings.pricePerUnit,items.listings.quantity,items.listings.hq';
   scanMsg('雇員上架');
-  await runBatches(chunk(ITEMS.map(it=>it.id),100).map(c=>[`${API}/v2/${enc(DC)}/${c.join(',')}?listings=999&entries=0&fields=${F}`,
+  await runBatches(chunk(only||ITEMS.map(it=>it.id),100).map(c=>[`${API}/v2/${enc(DC)}/${c.join(',')}?listings=999&entries=0&fields=${F}`,
     d=>Object.values(itemsOf(d)).forEach(it=>(it.listings||[]).forEach(l=>{const m=rmap.get(rkey(l.worldID,l.retainerName));
       if(m)cur[m.c.id].push({itemId:it.itemID,p:l.pricePerUnit,q:l.quantity,hq:!!l.hq,world:l.worldID,ret:m.r.name,seen:it.worldUploadTimes?.[l.worldID]||Date.now()})})),
     ()=>c.forEach(id=>failed.add(id))]),'');
@@ -17745,7 +17764,7 @@ function addRetainer(){
   if(!c)return;if(!name){$('#rname').focus();return toast('請輸入雇員名稱')}
   const owner=S.chars.find(x=>x.rets.some(r=>r.world===world&&lc(r.name)===lc(name)));
   if(owner)return toast(owner===c?'這個雇員已經登記過了':`這個雇員已登記在「${charLabel(owner)}」底下`);
-  c.rets.push({name,world});saveChars();toast(`已新增雇員 ${name}@${WN[world]}，按「掃描」開始記錄上架`);route();
+  c.rets.push({name,world});if(S.rsnap[c.id])S.rsnap[c.id].t=0;lsSet('aex_rsnap',S.rsnap);saveChars();toast(`已新增雇員 ${name}@${WN[world]}，按「掃描」開始記錄上架`);route();
 }
 function listingPanel(chars){
   const ls=[];chars.forEach(c=>(S.rsnap[c.id]?.list||[]).forEach(l=>ls.push({c,l})));
@@ -17769,7 +17788,7 @@ function detectPanel(){
     <span style="margin-left:auto;display:flex;gap:6px">
       ${rows.length?`<button class="btn sm" data-detall="1">${showAll?'只看未處理':'顯示全部（含已加入／略過）'}</button>`:''}
       ${pending.length?`<button class="btn sm" data-detimport="all" ${ambN?`title="${ambN} 筆同名待確認不會自動加入"`:''}>全部加入（${pending.length}）</button>`:''}
-      <button class="btn sm primary" data-scan="1">掃描</button></span></h2>
+      ${(w=>w?`<button class="btn sm" data-scan="1" title="同一角色 10 分鐘內不重掃，減少對 Universalis 的存取">${Math.ceil(w/60000)} 分鐘後可再掃</button>`:'<button class="btn sm primary" data-scan="1">掃描</button>')(Math.min(...chars.map(scanWait)))}</span></h2>
     ${list.length?`<div style="max-height:360px;overflow:auto"><table class="compact"><tr><th class="l">時間</th>${chars.length>1?'<th class="l">角色</th>':''}<th class="l">買賣</th><th class="l">物品</th><th class="l">伺服器</th><th class="l">雇員</th><th>單價</th><th>數量</th><th>金額</th><th></th></tr>
     ${list.map(r=>{const sell=r.x.side==='sell';const amt=sell?r.x.p*r.x.q:r.x.p*r.x.q*(1+(S.tax[r.x.world]??5)/100);
       return `<tr><td class="l num muted">${tstr(r.x.t)}</td>${chars.length>1?`<td class="l">${esc(charLabel(r.c))}</td>`:''}<td class="l ${sell?'down':'up'}">${sell?'賣出':'買入'}</td>
@@ -17811,12 +17830,15 @@ async function renderJournal(tok){
   </div>
   <div class="panel" style="margin-bottom:14px"><h2>持倉${merged&&S.chars.length>1?'<span class="muted">合併所有角色</span>':''}</h2><table><tr><th>名稱</th><th>數量</th><th>平均成本</th><th>現價</th><th>市值</th><th>未實現損益</th><th>報酬率</th><th>已實現</th></tr>
   ${hold.map(p=>`<tr class="row" data-go="#/item/${p.itemId}"><td><div class="name">${ico(ITEM[p.itemId])}<span>${esc(ITEM[p.itemId]?.n)}</span>${p.hq?'<span class="hq">HQ</span>':''}</div></td><td class="num">${fmt(p.qty)}</td><td class="num">${fmt(p.cost/p.qty,1)}</td><td class="num">${fmt(p.price)}</td><td class="num">${fmt(p.v)}</td><td>${signed(p.u)}</td><td>${pct(p.u!=null&&p.cost?p.u/p.cost*100:null)}</td><td>${signed(p.realized)}</td></tr>`).join('')||'<tr><td colspan=8 class="empty">目前沒有持倉</td></tr>'}</table></div>
-  <div class="panel"><h2>交易紀錄<span class="muted">${recs.length} 筆</span></h2><table><tr><th class="l">時間</th>${merged?'<th class="l">角色</th>':''}<th class="l">買賣</th><th class="l">物品</th><th class="l">伺服器</th><th>單價</th><th>數量</th><th>稅率</th><th>金額</th><th class="l">備註</th><th></th></tr>
-  ${[...recs].sort((a,b)=>b.time-a.time).map(r=>{const amt=r.side==='buy'?r.price*r.qty*(1+(r.tax||0)/100):r.price*r.qty;
-   return `<tr><td class="num l muted">${tstr(r.time/1000)}</td>${merged?`<td class="l">${esc(charName(r.charId))}</td>`:''}<td class="l ${r.side==='buy'?'up':'down'}">${r.side==='buy'?'買入':'賣出'}</td><td class="l">${esc(ITEM[r.itemId]?.n||r.itemId)}${r.hq?'<span class="hq">HQ</span>':''}</td><td class="l">${WN[r.world]||'—'}${r.side==='sell'&&r.ret?`<span class="muted">・${esc(r.ret)}</span>`:''}</td>
-   <td class="num">${fmt(r.price)}</td><td class="num">${fmt(r.qty)}</td><td class="num">${r.side==='buy'?(r.tax||0)+'%':'—'}</td><td class="num">${fmt(amt)}</td><td class="l muted">${esc(r.note)}</td>
-   <td style="white-space:nowrap"><button class="btn sm" data-edit="${r.id}">編輯</button> <button class="btn sm" data-del="${r.id}">刪除</button></td></tr>`}).join('')||`<tr><td colspan=${merged?11:10} class="empty">還沒有紀錄。可以掃描自動偵測，或按「手動新增」。</td></tr>`}</table>
+  <div class="panel"><h2>交易紀錄<span class="muted">${recs.length} 筆</span>
+    <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-weight:400">
+      <span class="seg sm">${[[7,'7 天'],[30,'30 天'],[90,'90 天'],[0,'全部']].map(([v,n])=>`<button class="${S.jf.days===v?'on':''}" data-jfdays="${v}">${n}</button>`).join('')}</span>
+      <span class="seg sm">${[['all','全部'],['buy','買入'],['sell','賣出']].map(([v,n])=>`<button class="${S.jf.side===v?'on':''}" data-jfside="${v}">${n}</button>`).join('')}</span>
+      <input id="jfq" placeholder="搜尋物品" value="${esc(S.jf.q)}" autocomplete="off" style="background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:4px 9px;width:140px">
+    </span></h2>
+  <div id="jtable"></div>
   <p class="note">買入金額＝單價 × 數量 ×（1＋稅率），遊戲中市場稅由買方支付；買入伺服器可以和角色所在伺服器不同（跨服購買）。賣出以成交價記錄，伺服器欄顯示上架的雇員。損益採平均成本法${merged?'，合併檢視時同一物品跨角色合併計算':''}；賣出數量超過當時持倉的部分不計損益。${b.unmatched?`<span class="up">（有 ${b.unmatched} 筆賣出超過持倉，請確認是否漏記買入）</span>`:''}</p></div>`;
+  drawJT();let jfT;$('#jfq').oninput=ev=>{clearTimeout(jfT);jfT=setTimeout(()=>setJF({q:ev.target.value}),200)};
   if($('#rname')){$('#rname').onkeydown=ev=>{if(ev.key==='Enter'&&!ev.isComposing)addRetainer()};
     const rc=$('#rchar');if(rc.tagName==='SELECT')rc.onchange=()=>{const c=charOf(rc.value);if(c)$('#rworld').value=c.world}}
   $('#jexp').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({version:3,chars:S.chars,journal:S.journal},null,1)],{type:'application/json'}));a.download='aex-journal.json';a.click()};
@@ -17824,6 +17846,38 @@ async function renderJournal(tok){
     if(!confirm(`匯入會取代目前的 ${S.journal.length} 筆紀錄${d.chars?'與角色清單':''}，確定嗎？`))return;S.journal=j;saveJournal();if(Array.isArray(d.chars)){S.chars=d.chars;S.chars.forEach(c=>{if(!Array.isArray(c.rets))c.rets=[]});saveChars()}toast(`已匯入 ${j.length} 筆`);route()}catch{toast('檔案格式不正確')}};
 }
 
+/* 交易紀錄表：期間／買賣／物品篩選，按日分組，一次顯示 JT_PAGE 筆 */
+S.jf=Object.assign({days:30,side:'all',q:''},lsGet('aex_jfilter',{}));S.jlimit=50;
+const JT_PAGE=50;const WD='日一二三四五六';
+const recAmt=r=>r.side==='buy'?r.price*r.qty*(1+(r.tax||0)/100):r.price*r.qty;
+function journalTable(){
+  const merged=S.jview==='all';const cols=merged?10:9;
+  const all=jRecords();const q=S.jf.q.trim();
+  const from=S.jf.days?Date.now()-S.jf.days*DAY*1000:0;
+  const list=all.filter(r=>r.time>=from&&(S.jf.side==='all'||r.side===S.jf.side)&&(!q||(ITEM[r.itemId]?.n||'').includes(q))).sort((a,b)=>b.time-a.time);
+  const sum=side=>list.filter(r=>r.side===side).reduce((s,r)=>s+recAmt(r),0);const nb=list.filter(r=>r.side==='buy').length,ns=list.length-nb;
+  if(!list.length)return `<div class="empty">${all.length?'這個期間沒有符合條件的紀錄。':'還沒有紀錄。可以掃描自動偵測，或按「手動新增」。'}</div>`;
+  const shown=list.slice(0,S.jlimit);
+  const dayKey=t=>{const d=new Date(t);return d.getFullYear()+'/'+(d.getMonth()+1)+'/'+d.getDate()};
+  const daySum={};list.forEach(r=>{const k=dayKey(r.time);const o=daySum[k]=daySum[k]||{b:0,s:0,n:0};o.n++;r.side==='buy'?o.b+=recAmt(r):o.s+=recAmt(r)});
+  let lastDay='';
+  const rows=shown.map(r=>{const k=dayKey(r.time);let head='';
+    if(k!==lastDay){lastDay=k;const d=new Date(r.time);const o=daySum[k];
+      head=`<tr><td colspan=${cols} class="l" style="background:var(--panel2);font-weight:600;padding-top:7px">${d.getMonth()+1}/${d.getDate()}（${WD[d.getDay()]}）
+        <span class="muted" style="font-weight:400;margin-left:10px">${o.n} 筆${o.b?`・買入 <span class="up">${fmt(o.b)}</span>`:''}${o.s?`・賣出 <span class="down">${fmt(o.s)}</span>`:''}</span></td></tr>`}
+    const tm=new Date(r.time);const hh=String(tm.getHours()).padStart(2,'0')+':'+String(tm.getMinutes()).padStart(2,'0');
+    return head+`<tr><td class="num l muted">${hh}</td>${merged?`<td class="l">${esc(charName(r.charId))}</td>`:''}<td class="l ${r.side==='buy'?'up':'down'}">${r.side==='buy'?'買入':'賣出'}</td>
+      <td class="l"><a href="#/item/${r.itemId}">${esc(ITEM[r.itemId]?.n||r.itemId)}</a>${r.hq?'<span class="hq">HQ</span>':''}</td><td class="l">${WN[r.world]||'—'}${r.side==='sell'&&r.ret?`<span class="muted">・${esc(r.ret)}</span>`:''}</td>
+      <td class="num">${fmt(r.price)}</td><td class="num">${fmt(r.qty)}</td><td class="num">${fmt(recAmt(r))}${r.side==='buy'&&r.tax?`<span class="muted" style="font-size:11px">（稅 ${r.tax}%）</span>`:''}</td><td class="l muted">${esc(r.note)}</td>
+      <td style="white-space:nowrap"><button class="btn sm" data-edit="${r.id}">編輯</button> <button class="btn sm" data-del="${r.id}">刪除</button></td></tr>`}).join('');
+  return `<div class="note" style="margin:0 0 8px">${S.jf.days?`近 ${S.jf.days} 天`:'全部期間'}：${list.length} 筆${nb?`・買入 <span class="up">${fmt(sum('buy'))}</span>（${nb} 筆）`:''}${ns?`・賣出 <span class="down">${fmt(sum('sell'))}</span>（${ns} 筆）`:''}${nb&&ns?`・淨收支 ${signed(sum('sell')-sum('buy'))}`:''}</div>
+    <table><tr><th class="l">時間</th>${merged?'<th class="l">角色</th>':''}<th class="l">買賣</th><th class="l">物品</th><th class="l">伺服器</th><th>單價</th><th>數量</th><th>金額</th><th class="l">備註</th><th></th></tr>${rows}</table>
+    ${list.length>shown.length?`<div style="text-align:center;margin-top:10px"><button class="btn" data-jfmore="1">再顯示 ${Math.min(JT_PAGE,list.length-shown.length)} 筆（還有 ${list.length-shown.length} 筆）</button></div>`:''}`;
+}
+function drawJT(){const el=$('#jtable');if(el)el.innerHTML=journalTable();
+  $('[data-jfdays]')&&document.querySelectorAll('[data-jfdays]').forEach(b=>b.classList.toggle('on',+b.dataset.jfdays===S.jf.days));
+  document.querySelectorAll('[data-jfside]').forEach(b=>b.classList.toggle('on',b.dataset.jfside===S.jf.side))}
+function setJF(o){Object.assign(S.jf,o);S.jlimit=JT_PAGE;lsSet('aex_jfilter',S.jf);drawJT()}
 const worldOpts=sel=>WORLDS.map(([id,n])=>`<option value="${id}" ${sel==id?'selected':''}>${n}</option>`).join('');
 function openChar(editId){
   const c=editId?charOf(editId):null;
@@ -17854,7 +17908,7 @@ function openChar(editId){
     let ch,needScan;
     if(c){const changed=c.name!==name||c.world!==world;const oldR=new Set(c.rets.map(r=>r.world+'|'+lc(r.name)));
       needScan=changed||rs.some(r=>!oldR.has(r.world+'|'+lc(r.name)));
-      c.name=name;c.world=world;c.rets=rs;if(changed&&S.detect[c.id])delete S.detect[c.id].found;ch=c}
+      c.name=name;c.world=world;c.rets=rs;if(changed&&S.detect[c.id]){delete S.detect[c.id].found;S.detect[c.id].t=0}if(needScan&&S.rsnap[c.id])S.rsnap[c.id].t=0;ch=c}
     else{ch={id:'c'+Date.now().toString(36),name,world,rets:rs};S.chars.push(ch);needScan=true;
       // 第一個角色：沒有角色的舊紀錄一併歸到這個角色
       if(S.chars.length===1)S.journal.forEach(r=>{if(!r.charId)r.charId=ch.id});saveJournal()}
@@ -17926,6 +17980,9 @@ document.addEventListener('click',async ev=>{
   if(el=t.closest('[data-jview]')){S.jview=el.dataset.jview;lsSet('aex_jview',S.jview);route();return}
   if(t.closest('[data-charadd]')){openChar();return}
   if(t.closest('[data-retadd]')){addRetainer();return}
+  if(el=t.closest('[data-jfdays]')){setJF({days:+el.dataset.jfdays});return}
+  if(el=t.closest('[data-jfside]')){setJF({side:el.dataset.jfside});return}
+  if(t.closest('[data-jfmore]')){S.jlimit+=JT_PAGE;drawJT();return}
   if(el=t.closest('[data-retdel]')){const [cid,i]=el.dataset.retdel.split('|');const c=charOf(cid);const r=c?.rets[+i];if(!r)return;
     if(!confirm(`移除雇員「${r.name}@${WN[r.world]||''}」？
 已加入的交易紀錄會保留。`))return;
@@ -17936,7 +17993,9 @@ document.addEventListener('click',async ev=>{
     if(!confirm(`刪除角色「${charLabel(c)}」？${n?`\n這個角色的 ${n} 筆紀錄會保留，改為「未指定角色」。`:''}`))return;
     S.chars=S.chars.filter(x=>x.id!==c.id);S.journal.forEach(r=>{if(r.charId===c.id)r.charId=null});delete S.detect[c.id];
     delete S.rsnap[c.id];saveChars();saveJournal();lsSet('aex_detect',S.detect);lsSet('aex_rsnap',S.rsnap);S.jview='all';lsSet('aex_jview','all');route();return}
-  if(t.closest('[data-scan]')){const chars=S.jview==='all'?S.chars:S.chars.filter(c=>c.id===S.jview);await scanChars(chars);route();return}
+  if(t.closest('[data-scan]')){const all=S.jview==='all'?S.chars:S.chars.filter(c=>c.id===S.jview);const chars=all.filter(c=>!scanWait(c));
+    if(!chars.length){const m=Math.ceil(Math.min(...all.map(scanWait))/60000);return toast(`剛掃描過，市場資料要有人上傳才會更新，${m} 分鐘後再掃`)}
+    await scanChars(chars);route();return}
   if(t.closest('[data-detall]')){S.showDetAll=!S.showDetAll;route();return}
   if(el=t.closest('[data-detimport]')){
     const v=el.dataset.detimport;
