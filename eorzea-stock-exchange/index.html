@@ -17596,49 +17596,62 @@ function calcBook(recs){
 }
 
 /* 掃描：買入看成交紀錄的 buyerName（全 DC 伺服器，可跨服），賣出看雇員上架是否消失且有對應成交 */
+// 掃描時放寬並行：Universalis 每個 IP 可同時 8 個連線、每秒 25 個請求；買入與雇員上架同時掃，共用一條進度條
+const SCANP={done:0,total:0,msg:''};
 async function scanChars(chars){
+  const old={MAXC:LIM.MAXC,GAP:LIM.GAP};LIM.MAXC=8;LIM.GAP=45;
+  Object.assign(SCANP,{done:0,total:0});
+  const rc=chars.filter(c=>c.rets?.length);
+  showOverlay(`掃描 ${chars.map(charLabel).join('、')} 的交易紀錄`,'');
   try{
-    await scanBuys(chars);
-    const rc=chars.filter(c=>c.rets?.length);
-    if(rc.length)await scanRetainers(rc);
-  }finally{lsSet('aex_detect',S.detect);lsSet('aex_rsnap',S.rsnap);hideOverlay()}
+    await Promise.all([scanBuys(chars),rc.length?scanRetainers(rc):null]);
+  }finally{Object.assign(LIM,old);lsSet('aex_detect',S.detect);lsSet('aex_rsnap',S.rsnap);hideOverlay()}
 }
-async function runBatches(tasks,label){
-  let done=0;
+function scanMsg(m){SCANP.msg=m;setProgress(SCANP.total?SCANP.done/SCANP.total:0,`${m}・${SCANP.done} / ${SCANP.total} 批`)}
+async function runBatches(tasks){
+  SCANP.total+=tasks.length;let fails=0;
   await Promise.all(tasks.map(async([url,onData,onFail])=>{
-    try{onData(await getJSON(url,{persist:false,ttl:0}))}catch(e){console.warn('scan',e);onFail&&onFail()}
-    done++;setProgress(done/tasks.length,`${label}${done} / ${tasks.length} 批`);
+    try{onData(await getJSON(url,{persist:false,ttl:0}))}catch(e){console.warn('scan',e);fails++;onFail&&onFail()}
+    SCANP.done++;scanMsg(SCANP.msg);
   }));
+  return fails;
 }
 async function scanBuys(chars){
   // 角色＝名稱＋伺服器。但成交紀錄只有買家名稱、沒有買家所屬伺服器（任何角色都能跨服購買），
   // 所以登記了同名角色（不同伺服器）時無從判斷是誰買的：這筆會列在每個同名角色底下，標「同名待確認」，由使用者選擇歸屬
   const names=new Map();chars.forEach(c=>{const k=lc(c.name);names.set(k,[...(names.get(k)||[]),c])});
   const found={};chars.forEach(c=>found[c.id]=[]);
-  const since=Date.now()/1000-7*DAY;const hot=new Set();
+  // 增量掃描：掃過的角色只抓上次掃描之後（多留 1 小時緩衝）的成交，資料量小很多
+  const lastT=Math.min(...chars.map(c=>S.detect[c.id]?.t||0));
+  const within=lastT?Math.min(7*DAY,Math.ceil((Date.now()-lastT)/1000)+3600):7*DAY;
+  const since=Date.now()/1000-within;const hot=new Set();
+  const F='items.itemID,items.entries.buyerName,items.entries.timestamp,items.entries.pricePerUnit,items.entries.quantity,items.entries.hq,items.entries.worldID';
   const take=(id,x,w)=>{const cs=names.get(lc(x.buyerName));if(!cs)return;const world=w??x.worldID;
     const amb=cs.length>1;cs.forEach(ch=>found[ch.id].push({itemId:id,t:x.timestamp,p:x.pricePerUnit,q:x.quantity,hq:!!x.hq,world,...(amb?{amb:true}:{})}))};
-  const who=chars.map(charLabel).join('、');
-  showOverlay(`掃描 ${who} 的買入紀錄`,'陸行鳥 DC 全部伺服器・近 7 天・含跨服購買');
-  await runBatches(chunk(ITEMS.map(it=>it.id),100).map(c=>[`${API}/v2/history/${enc(DC)}/${c.join(',')}?entriesToReturn=999&entriesWithin=${7*DAY}`,
+  scanMsg(lastT?`買入：上次掃描後的新成交`:'買入：全 DC 近 7 天');
+  let fails=await runBatches(chunk(ITEMS.map(it=>it.id),100).map(c=>[`${API}/v2/history/${enc(DC)}/${c.join(',')}?entriesToReturn=999&entriesWithin=${within}&fields=${F}`,
     d=>Object.values(itemsOf(d)).forEach(it=>{const e=it.entries||[];
       // 熱門物品在 DC 範圍內 999 筆蓋不到 7 天，之後改逐服掃描
       if(e.length>=999&&e[e.length-1].timestamp>since){hot.add(it.itemID);return}
-      e.forEach(x=>take(it.itemID,x))})]),'');
+      e.forEach(x=>take(it.itemID,x))})]));
   if(hot.size){
-    showOverlay(`掃描 ${who} 的買入紀錄・熱門物品逐服補掃`,`${hot.size} 個成交量大的物品，在 DC 範圍內筆數不夠涵蓋 7 天`);
-    const tasks=[];WORLDS.forEach(([w])=>chunk([...hot],100).forEach(c=>tasks.push([`${API}/v2/history/${w}/${c.join(',')}?entriesToReturn=999&entriesWithin=${7*DAY}`,
+    scanMsg(`買入：${hot.size} 個熱門物品逐服補掃`);
+    const tasks=[];WORLDS.forEach(([w])=>chunk([...hot],100).forEach(c=>tasks.push([`${API}/v2/history/${w}/${c.join(',')}?entriesToReturn=999&entriesWithin=${within}&fields=${F}`,
       d=>Object.values(itemsOf(d)).forEach(it=>(it.entries||[]).forEach(x=>take(it.itemID,x,w)))])));
-    await runBatches(tasks,'');
+    fails+=await runBatches(tasks);
   }
-  chars.forEach(c=>{const d=S.detect[c.id]=S.detect[c.id]||{};d.t=Date.now();d.found=found[c.id].sort((a,b)=>b.t-a.t)});
+  // 新結果併入舊結果（保留 30 天內），有批次失敗就不推進掃描時間，下次會重抓這段
+  const keep=Date.now()/1000-30*DAY;
+  chars.forEach(c=>{const d=S.detect[c.id]=S.detect[c.id]||{};const m=new Map();
+    [...(d.found||[]).filter(x=>x.t>=keep),...found[c.id]].forEach(x=>m.set(tradeKey(x),x));
+    d.found=[...m.values()].sort((a,b)=>b.t-a.t);if(!fails||!d.t)d.t=Date.now()});
 }
 async function scanRetainers(chars){
   const rkey=(w,n)=>w+'|'+lc(n);
   const rmap=new Map();chars.forEach(c=>c.rets.forEach(r=>rmap.set(rkey(r.world,r.name),{c,r})));
   const cur={};chars.forEach(c=>cur[c.id]=[]);const failed=new Set();
   const F='items.itemID,items.worldUploadTimes,items.listings.retainerName,items.listings.worldID,items.listings.pricePerUnit,items.listings.quantity,items.listings.hq';
-  showOverlay(`掃描 ${chars.map(charLabel).join('、')} 的雇員上架`,`雇員：${chars.flatMap(c=>c.rets.map(r=>`${r.name}@${WN[r.world]||''}`)).join('、')}`);
+  scanMsg('雇員上架');
   await runBatches(chunk(ITEMS.map(it=>it.id),100).map(c=>[`${API}/v2/${enc(DC)}/${c.join(',')}?listings=999&entries=0&fields=${F}`,
     d=>Object.values(itemsOf(d)).forEach(it=>(it.listings||[]).forEach(l=>{const m=rmap.get(rkey(l.worldID,l.retainerName));
       if(m)cur[m.c.id].push({itemId:it.itemID,p:l.pricePerUnit,q:l.quantity,hq:!!l.hq,world:l.worldID,ret:m.r.name,seen:it.worldUploadTimes?.[l.worldID]||Date.now()})})),
@@ -17656,7 +17669,7 @@ async function scanRetainers(chars){
     const ids=[...new Set(gone.map(g=>g.l.itemId))];
     const within=Math.ceil((Date.now()-Math.min(...gone.map(g=>g.l.seen)))/1000)+3600;
     const hist={};
-    showOverlay(`比對 ${chars.map(charLabel).join('、')} 的雇員成交`,`${gone.length} 筆掛單已下架，確認是否賣出`);
+    scanMsg(`比對 ${gone.length} 筆下架的掛單是否賣出`);
     await runBatches(chunk(ids,100).map(c=>[`${API}/v2/history/${enc(DC)}/${c.join(',')}?entriesToReturn=999&entriesWithin=${Math.min(within,30*DAY)}`,
       d=>Object.values(itemsOf(d)).forEach(it=>hist[it.itemID]=it.entries||[])]),'');
     const used=new Set();
