@@ -13,6 +13,13 @@
   --mono:"JetBrains Mono","Cascadia Mono","Roboto Mono",Consolas,"Courier New",monospace;
 }
 *{box-sizing:border-box}
+/* 深色細捲軸（全站） */
+@supports (-moz-appearance:none){*{scrollbar-width:thin;scrollbar-color:#2c3545 transparent}}  /* Firefox；Chrome/Edge 用下面的 webkit 樣式（無箭頭） */
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#2c3545;border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:#45516a;background-clip:padding-box}
+::-webkit-scrollbar-corner{background:transparent}::-webkit-scrollbar-button{display:none}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.5 "Noto Sans TC","Microsoft JhengHei","PingFang TC",system-ui,sans-serif}
 a{color:inherit;text-decoration:none}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -245,7 +252,6 @@ table.quote td,table.quote th{white-space:nowrap}
   table :is([data-edit],[data-holdset])::after{content:"✎";font-size:14px}
   table :is([data-del],[data-holddel])::after{content:"✕";font-size:13px}
   /* 還是需要左右滑時，用深色細捲軸 */
-  .panel{scrollbar-width:thin;scrollbar-color:#2a3344 transparent}
   .panel::-webkit-scrollbar{height:4px}.panel::-webkit-scrollbar-thumb{background:#2a3344;border-radius:2px}.panel::-webkit-scrollbar-track{background:transparent}
 }
 </style>
@@ -16856,16 +16862,19 @@ function drawLine(cv,pts){
   pts.forEach((p,i)=>{g.beginPath();g.arc(x(i),y(p.v),2.5,0,7);g.fillStyle=col;g.fill()});
 }
 
-function buildCandles(es,mode){
+function buildCandles(es,mode,days=30){
   const now=nowS();const out=[];
   let n,start,step;
   if(mode==='hour'){step=3600;n=72;start=Math.floor(now/3600)*3600-(n-1)*3600}
-  else{step=DAY;const d=new Date();d.setHours(0,0,0,0);const today=d.getTime()/1000;n=30;start=today-(n-1)*DAY;
-    const first=es.length?Math.min(...es.map(x=>x.t)):now;const fs=Math.max(start,Math.floor((first-today)/DAY)*DAY+today);n=Math.round((today-fs)/DAY)+1;start=fs}
+  else{
+    // 日 K：一根一天；週 K：一根一週（週一開始），近 1 年
+    const d=new Date();d.setHours(0,0,0,0);if(mode==='week')d.setDate(d.getDate()-((d.getDay()+6)%7));
+    step=mode==='week'?7*DAY:DAY;const last=d.getTime()/1000;n=mode==='week'?53:days;start=last-(n-1)*step;
+    const first=es.length?Math.min(...es.map(x=>x.t)):now;const fs=Math.max(start,Math.floor((first-last)/step)*step+last);n=Math.round((last-fs)/step)+1;start=fs}
   const a=[...es].sort((x,y)=>x.t-y.t);let prevC=null,j=0;
   for(let i=0;i<n;i++){
     const t0=start+i*step,t1=t0+step;const b=[];while(j<a.length&&a[j].t<t1){if(a[j].t>=t0)b.push(a[j]);j++}
-    const lab=mode==='hour'?tstr(t0,false):(()=>{const d=new Date(t0*1000);return `${d.getMonth()+1}/${d.getDate()}`})();
+    const lab=mode==='hour'?tstr(t0,false):(()=>{const d=new Date(t0*1000);return (mode==='week'&&d.getMonth()===0&&d.getDate()<=7?d.getFullYear()+'/':'')+`${d.getMonth()+1}/${d.getDate()}`})();
     if(b.length){const ps=b.map(x=>x.p);const c={t:t0,lab,o:b[0].p,c:b[b.length-1].p,h:Math.max(...ps),l:Math.min(...ps),v:b.reduce((s,x)=>s+x.q,0),n:b.length};out.push(c);prevC=c.c}
     else out.push(prevC==null?{t:t0,lab,empty:true,none:true}:{t:t0,lab,o:prevC,c:prevC,h:prevC,l:prevC,v:0,empty:true});
   }
@@ -17176,6 +17185,7 @@ document.addEventListener('click',ev=>{
   if(el=t.closest('[data-hmsize]')){S.hmSize=el.dataset.hmsize;lsSet('aex_hmsize',S.hmSize);route();return}
   if(el=t.closest('[data-ntag]')){S.newsTag=el.dataset.ntag;route();return}
   if(el=t.closest('[data-kov]')){S.kopt.ov=el.dataset.kov;lsSet('aex_kopt',S.kopt);route();return}
+  if(el=t.closest('[data-krange]')){S.kopt.range=+el.dataset.krange;lsSet('aex_kopt',S.kopt);route();return}
   if(el=t.closest('[data-ksub]')){S.kopt.sub=el.dataset.ksub;lsSet('aex_kopt',S.kopt);route();return}
 });
 S.kopt=Object.assign({ov:'ma',sub:'vol'},lsGet('aex_kopt',{}));
@@ -17266,6 +17276,14 @@ async function renderSector(key,tok){
 
 /* ========== 個股 ========== */
 const ITEMV={mode:'day'};
+S.histL={};   // `${id}|${天數}` -> {t, e, removed, raw}：個股 K 線用的長期資料
+async function loadLong(id,days){
+  const k=id+'|'+days;const h=S.histL[k];if(h&&Date.now()-h.t<TTL)return h;
+  const d=await getJSON(`${API}/v2/history/${enc(DC)}/${id}?entriesToReturn=9999&entriesWithin=${days*DAY}&fields=entries.hq,entries.pricePerUnit,entries.quantity,entries.timestamp,entries.worldID`,{persist:false});
+  const raw=d?.entries||[];const cl=cleanEntries(normEntries(raw));
+  return S.histL[k]={t:Date.now(),e:cl.e,removed:cl.removed,raw:raw.length};
+}
+const KRANGES=[[30,'1 個月'],[90,'3 個月'],[180,'6 個月']];
 async function renderItem(id,tok){
   const it=ITEM[id];if(!it){$('#view').innerHTML='<div class="empty">找不到這個物品</div>';return}
   $('#view').innerHTML=`<div class="empty">載入 ${codeOf(id)} ${esc(it.n)} 的資料…</div>`;
@@ -17315,6 +17333,12 @@ async function renderItem(id,tok){
   const pb=it.npc>0&&s.price!=null?s.price/it.npc:null;
   const turnover=lsQty?s.vol/lsQty*100:null;
   const mode=ITEMV.mode;const ko=S.kopt;
+  // 日 K 超過 30 天或週 K 時改用長期資料
+  const kdays=mode==='week'?365:mode==='day'?(ko.range||30):0;
+  let kL=null;if(kdays>30){try{kL=await loadLong(id,kdays)}catch(e){console.warn('long hist',e)}if(tok!==TOKEN)return}
+  const kEs=kL?kL.e.filter(x=>x.hq===q&&(!w||x.w===w)):esScope;
+  const kSpan=kEs.length?(now-Math.min(...kEs.map(x=>x.t)))/DAY:0;
+  const kCapped=kL?kL.raw>=9999:capped;const kRemoved=kL?kL.removed:removed;
   const chartH=mode==='tick'?400:(ko.sub!=='vol'?470:400);
   const qb=(k,v,c='')=>`<div><span class="muted">${k}</span><b class="num ${c}">${v}</b></div>`;
   $('#view').innerHTML=`
@@ -17334,10 +17358,11 @@ async function renderItem(id,tok){
   </div>
   <div class="grid" style="grid-template-columns:1fr 340px;margin-bottom:14px">
     <div class="panel"><h2 style="flex-wrap:wrap">
-      <span class="seg"><button data-mode="tick" class="${mode==='tick'?'on':''}">分時</button><button data-mode="day" class="${mode==='day'?'on':''}">日 K</button><button data-mode="hour" class="${mode==='hour'?'on':''}">小時 K</button></span>
+      <span class="seg"><button data-mode="tick" class="${mode==='tick'?'on':''}">分時</button><button data-mode="hour" class="${mode==='hour'?'on':''}">小時 K</button><button data-mode="day" class="${mode==='day'?'on':''}">日 K</button><button data-mode="week" class="${mode==='week'?'on':''}">週 K</button></span>
+      ${mode==='day'?`<span class="seg">${KRANGES.map(([v,n])=>`<button data-krange="${v}" class="${(ko.range||30)===v?'on':''}">${n}</button>`).join('')}</span>`:''}
       ${mode!=='tick'?`<span class="seg"><button data-kov="ma" class="${ko.ov==='ma'?'on':''}">均線</button><button data-kov="boll" class="${ko.ov==='boll'?'on':''}">布林</button><button data-kov="none" class="${ko.ov==='none'?'on':''}">無</button></span>
       <span class="seg"><button data-ksub="vol" class="${ko.sub==='vol'?'on':''}">量</button><button data-ksub="kd" class="${ko.sub==='kd'?'on':''}">KD</button><button data-ksub="rsi" class="${ko.sub==='rsi'?'on':''}">RSI</button><button data-ksub="macd" class="${ko.sub==='macd'?'on':''}">MACD</button></span>`:''}
-      <span class="muted">${mode==='tick'?'近 24 小時・每 10 分鐘':mode==='day'?'近 30 日':'近 72 小時'}${removed?'・已排除 '+removed+' 筆極端成交':''}${capped?'・<span class="up">達 999 筆上限，只涵蓋約 '+fmt(span,1)+' 天</span>':''}</span></h2>
+      <span class="muted">${mode==='tick'?'近 24 小時・每 10 分鐘':mode==='day'?`近 ${ko.range||30} 日`:mode==='week'?'近 1 年・每根一週':'近 72 小時'}${(mode==='tick'?removed:kRemoved)?'・已排除 '+(mode==='tick'?removed:kRemoved)+' 筆極端成交':''}${(mode==='tick'?capped:kCapped)?`・<span class="up">達 ${kL?'9,999':'999'} 筆上限，只涵蓋約 ${fmt(mode==='tick'?span:kSpan,1)} 天</span>`:''}${kdays>30&&!kL?'・<span class="up">長期資料讀取失敗，先顯示 30 天</span>':''}</span></h2>
       <div class="chartbox" id="kbox"><canvas style="height:${chartH}px"></canvas><div class="tip"></div></div></div>
     <div class="grid" style="align-content:start">
       <div class="panel"><h2>五檔報價<span class="muted">賣盤＝上架；買盤＝近 24h 成交模擬</span></h2>
@@ -17374,7 +17399,7 @@ async function renderItem(id,tok){
       ${mins.length>1?`<p class="note">最低與最高上架價差 <span class="num up">${fmt((wMax/wMin-1)*100,1)}%</span>。點伺服器可切換範圍。</p>`:''}</div>
   </div>`;
   if(mode==='tick')mountTick($('#kbox'),esScope,s.pP);
-  else mountCandles($('#kbox'),buildCandles(esScope,mode),S.kopt);
+  else mountCandles($('#kbox'),buildCandles(kEs,mode,kL?kdays:30),S.kopt);
 }
 
 /* ========== 伺服器 ========== */
