@@ -453,6 +453,104 @@ const npcPrice = id => (ITEMS[id] && ITEMS[id][3]) || 0;
 const isCrystal = id => id >= 2 && id <= 19;
 const KLABEL = { buy: '市場', npc: '商店', craft: '做' };
 
+// ================= API 快取（所有分頁共用，存進 IndexedDB，重新整理後還在） =================
+// 以「資料種類＋伺服器範圍＋物品」為單位：只抓快取裡沒有或已過期的物品；同一筆正在抓的不會重複發請求。
+// mkt＝目前上架（5 分鐘）、agg＝彙總行情（15 分鐘）、hist＝近 30 天成交（15 分鐘，各分頁再自行截取天數）
+// force＝使用者按了「查詢／刷新」：1 分鐘內剛抓的資料直接沿用，其餘重抓
+const UC = (() => {
+  const TTL = { mkt: 5 * 60e3, agg: 15 * 60e3, hist: 15 * 60e3 }, FORCE = 60e3, KEEP = 20 * 60e3;
+  const MF = ['itemID', 'lastUploadTime', 'unitsForSale', 'minPriceNQ', 'minPriceHQ', 'listings.pricePerUnit', 'listings.quantity', 'listings.worldName', 'listings.hq', 'listings.listingID', 'listings.retainerName'];
+  const HF = ['pricePerUnit', 'quantity', 'timestamp', 'hq', 'buyerName', 'worldName'];
+  const multi = c => c.length > 1 ? 'items.' : '';
+  const KIND = {
+    mkt: { size: 100, conc: 4, url: (sc, c) => `${API}/${sc}/${c.join(',')}?listings=200&entries=0&fields=${MF.map(f => multi(c) + f).join(',')}`,
+      pick: (j, c) => c.length > 1 ? Object.fromEntries(c.filter(id => j.items && j.items[id]).map(id => [id, j.items[id]])) : { [c[0]]: j } },
+    agg: { size: 100, conc: 6, url: (sc, c) => `${API}/aggregated/${sc}/${c.join(',')}`,
+      pick: (j, c) => { const o = {}; c.forEach(id => o[id] = null); (j.results || []).forEach(r => { if (r && r.itemId in o) o[r.itemId] = r; }); return o; } },
+    hist: { size: 20, conc: 3, url: (sc, c) => `${API}/history/${sc}/${c.join(',')}?entriesWithin=2592000&entriesToReturn=5000&fields=${HF.map(f => multi(c) + 'entries.' + f).join(',')}`,
+      pick: (j, c) => { const o = {}; c.forEach(id => o[id] = ((c.length > 1 ? j.items && j.items[id] : j) || {}).entries || []); return o; } },
+  };
+  const mem = new Map(), fly = new Map(); let db = null, net = 0;
+  const ready = new Promise(done => {
+    setTimeout(done, 1500); // IndexedDB 不能用（無痕模式等）時就只用記憶體快取
+    try {
+      const r = indexedDB.open('ffcc-api', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('c');
+      r.onerror = () => done();
+      r.onsuccess = () => {
+        db = r.result; const now = Date.now();
+        try {
+          const tx = db.transaction('c', 'readwrite');
+          tx.objectStore('c').openCursor().onsuccess = e => {
+            const c = e.target.result; if (!c) return;
+            if (!c.value || now - c.value.t > KEEP) c.delete(); else if (!mem.has(c.key)) mem.set(c.key, c.value);
+            c.continue();
+          };
+          tx.oncomplete = tx.onerror = tx.onabort = () => done();
+        } catch (e) { done(); }
+      };
+    } catch (e) { done(); }
+  });
+  function save(list) { if (!db || !list.length) return; try { const s = db.transaction('c', 'readwrite').objectStore('c'); list.forEach(([k, v]) => s.put(v, k)); } catch (e) {} }
+  // 定期清掉過期資料，避免越存越大
+  setInterval(() => {
+    const now = Date.now(), old = []; mem.forEach((v, k) => { if (now - v.t > KEEP) old.push(k); });
+    old.forEach(k => mem.delete(k));
+    if (db && old.length) try { const s = db.transaction('c', 'readwrite').objectStore('c'); old.forEach(k => s.delete(k)); } catch (e) {}
+  }, 5 * 60e3);
+  // 回傳 { d: {id: 資料}, t: 用到的最舊資料時間 }；soft＝部分失敗時照樣回傳拿到的部分
+  async function get(kind, scope, ids, { force, soft, onProgress } = {}) {
+    await ready;
+    const K = KIND[kind], sc = encodeURIComponent(scope), now = Date.now(), age = force ? FORCE : TTL[kind], key = id => kind + '|' + scope + '|' + id;
+    const out = {}, wait = [], need = []; let t = now, err = null;
+    [...new Set(ids.map(Number))].forEach(id => {
+      const c = mem.get(key(id));
+      if (c && now - c.t < age) { out[id] = c.d; t = Math.min(t, c.t); }
+      else if (fly.has(key(id))) wait.push([id, fly.get(key(id))]);
+      else need.push(id);
+    });
+    const jobs = [];
+    for (let i = 0; i < need.length; i += K.size) {
+      const c = need.slice(i, i + K.size); let res, rej;
+      const p = new Promise((a, b) => { res = a; rej = b; }); p.catch(() => {});
+      c.forEach(id => fly.set(key(id), p)); jobs.push({ c, p, res, rej });
+    }
+    let next = 0, done = 0;
+    await Promise.all(Array.from({ length: Math.min(K.conc, jobs.length) }, async () => {
+      while (next < jobs.length) {
+        const jb = jobs[next++];
+        try {
+          net++; const j = await getJSON(K.url(sc, jb.c));
+          if (!j) throw new Error('Universalis 暫時沒有回應，請稍後再試');
+          const got = K.pick(j, jb.c), ts = Date.now(), put = [];
+          Object.entries(got).forEach(([id, v]) => { const e = { t: ts, d: v }; mem.set(key(id), e); put.push([key(id), e]); out[id] = v; });
+          save(put); jb.res(got);
+        } catch (e) { err = err || e; jb.rej(e); }
+        finally { jb.c.forEach(id => { if (fly.get(key(id)) === jb.p) fly.delete(key(id)); }); onProgress && onProgress(++done, jobs.length); }
+      }
+    }));
+    for (const [id, p] of wait) { try { const g = await p; if (id in g) out[id] = g[id]; } catch (e) { err = err || e; } }
+    if (err && !soft) throw err;
+    return { d: out, t };
+  }
+  // 成交紀錄：快取存 30 天，取用時截成最近 days 天
+  async function hist(ids, scope, days, o) {
+    const r = await get('hist', scope, ids, o), cut = Date.now() / 1000 - days * 86400;
+    for (const id in r.d) r.d[id] = r.d[id].filter(e => e.timestamp >= cut);
+    return r;
+  }
+  return { get, hist, get net() { return net; } };
+})();
+// 很少變動的資料（伺服器清單、稅率）存在 localStorage
+async function cachedJSON(url, ttl) {
+  const k = 'ffcc:api:' + url;
+  try { const c = JSON.parse(localStorage.getItem(k)); if (c && Date.now() - c.t < ttl) return c.d; } catch (e) {}
+  const r = await fetch(url); if (!r.ok) throw new Error('HTTP ' + r.status); // 開頁時就會用到，getJSON 在後面的 script 才定義，所以這裡直接用 fetch
+  const d = await r.json();
+  if (d) try { localStorage.setItem(k, JSON.stringify({ t: Date.now(), d })); } catch (e) {}
+  return d;
+}
+
 const S = { ownPanelOpen: true, altClosed: new Set(), showAlt: true, treeClosed: new Set(), showList: true, hoardOpen: new Set(), manualOpen: new Set(), ownOpen: new Set(), treeOpen: new Set(), altOpen: new Set(), prodOpen: new Set(), picked: null, M: null, scope: null, overrides: {}, prodQ: 'hq', matQ: 'any', route: 'auto', collapsed: new Set(),
   sub: 'tree', itemView: {}, buyMode: 'exact', shopN: 'plan', hideDone: false, view: 'tree', P: { bought: {}, gone: {}, npc: {} } };
 
@@ -538,7 +636,7 @@ S.sellRate = 0.05; S.sellCfg = (() => { try { return JSON.parse(localStorage.get
 const sellNet = p => p == null ? null : p * (1 - S.sellRate);
 async function loadSellRate() {
   const w = S.sellCfg.world; if (!w) { S.sellRate = 0.05; $('#sellRateTxt').textContent = '（預設 5%）'; return; }
-  try { const j = await getJSON(`${API}/tax-rates?world=${encodeURIComponent(w)}`); const r = j && j[S.sellCfg.city]; S.sellRate = r != null ? r / 100 : 0.05; $('#sellRateTxt').textContent = `本週賣出稅 ${Math.round(S.sellRate * 100)}%`; }
+  try { const j = await cachedJSON(`${API}/tax-rates?world=${encodeURIComponent(w)}`, 3600e3); const r = j && j[S.sellCfg.city]; S.sellRate = r != null ? r / 100 : 0.05; $('#sellRateTxt').textContent = `本週賣出稅 ${Math.round(S.sellRate * 100)}%`; }
   catch (e) { S.sellRate = 0.05; $('#sellRateTxt').textContent = '（讀不到稅率，用 5%）'; }
   refreshAll();
 }
@@ -561,7 +659,7 @@ $('#go').addEventListener('click', () => run(true));
 
 (async () => {
   try {
-    const [dcs, worlds] = await Promise.all([fetch(API + '/data-centers').then(r => r.json()), fetch(API + '/worlds').then(r => r.json())]);
+    const [dcs, worlds] = await Promise.all([cachedJSON(API + '/data-centers', 7 * 864e5), cachedJSON(API + '/worlds', 7 * 864e5)]);
     const wn = Object.fromEntries(worlds.map(w => [w.id, w.name]));
     dcs.filter(d => d.region === '繁中服').forEach(d => d.worlds.forEach(w => {
       if (wn[w]) $('#scope').insertAdjacentHTML('beforeend', `<option value="${wn[w]}">${wn[w]}（單一伺服器）</option>`);
@@ -578,27 +676,11 @@ function collect(id, set, stack) {
   RECIPES[id].forEach(r => r.i.forEach(([ing]) => collect(ing, set, stack)));
   stack.delete(id);
 }
-// 價格快取：三個分頁共用，5 分鐘內同一物品不重複查詢；按「查詢」會強制重抓
-const PCACHE = {}, HCACHE = {}, TTL = 5 * 60e3;
+// 價格：走共用 API 快取（UC），5 分鐘內同一物品不重複查詢；按「查詢」會強制重抓（1 分鐘內的資料直接沿用）
 async function fetchMarket(ids, scope, force) {
-  const out = {}, now = Date.now(), need = [];
-  let minT = now;
-  ids.filter(marketable).forEach(id => {
-    const c = PCACHE[scope + '|' + id];
-    if (!force && c && now - c.t < TTL) { out[id] = c.d; minT = Math.min(minT, c.t); } else need.push(id);
-  });
-  const chunks = []; for (let i = 0; i < need.length; i += 100) chunks.push(need.slice(i, i + 100));
-  await Promise.all(chunks.map(async chunk => {
-    const fields = ['itemID', 'lastUploadTime', 'listings.pricePerUnit', 'listings.quantity', 'listings.worldName', 'listings.hq', 'listings.listingID', 'listings.retainerName']
-      .map(f => chunk.length > 1 ? 'items.' + f : f).join(',');
-    const res = await fetch(`${API}/${encodeURIComponent(scope)}/${chunk.join(',')}?listings=200&entries=0&fields=${fields}`);
-    if (!res.ok) throw new Error('Universalis 回應 ' + res.status);
-    const j = await res.json();
-    const got = chunk.length > 1 ? (j.items || {}) : { [chunk[0]]: j };
-    Object.entries(got).forEach(([id, d]) => { out[id] = d; PCACHE[scope + '|' + id] = { d, t: now }; });
-  }));
-  fetchMarket.lastT = minT;
-  return out;
+  const r = await UC.get('mkt', scope, ids.filter(marketable), { force });
+  fetchMarket.lastT = r.t;
+  return r.d;
 }
 async function run(force) {
   force = force === true;
@@ -845,22 +927,7 @@ function subtreeOwned(id, left) {
 
 // ---------- 近期成交走勢 ----------
 async function fetchHistory(ids, scope, force) {
-  const out = {}, now = Date.now(), need = [];
-  ids.filter(marketable).forEach(id => { const c = HCACHE[scope + '|' + id]; if (!force && c && now - c.t < TTL * 2) out[id] = c.d; else need.push(id); });
-  const chunks = []; for (let i = 0; i < need.length; i += 20) chunks.push(need.slice(i, i + 20));
-  let k = 0; // 同時最多 3 個請求，避免被限流
-  await Promise.all([0, 1, 2].map(async () => {
-    while (k < chunks.length) {
-      const chunk = chunks[k++];
-      const f = ['entries.pricePerUnit', 'entries.quantity', 'entries.timestamp', 'entries.hq', 'entries.buyerName', 'entries.worldName'].map(x => chunk.length > 1 ? 'items.' + x : x).join(',');
-      const res = await fetch(`${API}/history/${encodeURIComponent(scope)}/${chunk.join(',')}?entriesWithin=2592000&entriesToReturn=5000&fields=${f}`);
-      if (!res.ok) throw new Error('Universalis 成交紀錄回應 ' + res.status);
-      const j = await res.json();
-      const got = chunk.length > 1 ? Object.fromEntries(Object.entries(j.items || {}).map(([id, v]) => [id, v.entries || []])) : { [chunk[0]]: j.entries || [] };
-      chunk.forEach(id => { const d = got[id] || []; out[id] = d; HCACHE[scope + '|' + id] = { d, t: now }; });
-    }
-  }));
-  return out;
+  return (await UC.hist(ids.filter(marketable), scope, 30, { force })).d;
 }
 const HC = {};
 // 取「幾天前 from～to」區間的成交單價中位數
@@ -1779,14 +1846,8 @@ const MK = { rows: null, view: 'score', sort: null, shown: 50, filt: '', pRoute:
 async function fetchMatMarket(rows, scope) {
   const ids = new Set();
   rows.filter(r => r.craft).forEach(r => collect(r.id, ids, new Set()));
-  const list = [...ids].filter(marketable), M = {};
-  const ch = []; for (let i = 0; i < list.length; i += 100) ch.push(list.slice(i, i + 100));
-  await pool(ch.map(c => async () => {
-    const fl = ['lastUploadTime', 'listings.pricePerUnit', 'listings.quantity', 'listings.worldName', 'listings.hq', 'listings.listingID', 'listings.retainerName'].map(x => c.length > 1 ? 'items.' + x : x).join(',');
-    const j = await getJSON(`${API}/${encodeURIComponent(scope)}/${c.join(',')}?listings=30&entries=0&fields=${fl}`).catch(() => null);
-    if (!j) return; if (c.length > 1) Object.assign(M, j.items || {}); else M[c[0]] = j;
-  }), 4, (d, n) => progress(`第 4 步：查詢可合成物品的材料價格（${list.length} 種材料）…（${d}/${n}）`, 0.9 + d / n * 0.1));
-  return M;
+  const list = [...ids].filter(marketable);
+  return (await UC.get('mkt', scope, list, { soft: true, onProgress: (d, n) => progress(`第 4 步：查詢可合成物品的材料價格（${list.length} 種材料）…（${d}/${n}）`, 0.9 + d / n * 0.1) })).d;
 }
 function calcProfits() {
   if (!MK.M) return;
@@ -1900,12 +1961,12 @@ async function scan() {
   $('#mGo').disabled = true; $('#mStatus').className = 'status';
   try {
     // 第 1 步：彙總資料快速篩選
-    const chunks = []; for (let i = 0; i < ids.length; i += 100) chunks.push(ids.slice(i, i + 100));
-    const agg = await pool(chunks.map(c => () => getJSON(`${API}/aggregated/${encodeURIComponent(scope)}/${c.join(',')}`).catch(() => null)), 6,
-      (d, n) => progress(`第 1 步：快速篩選 ${ids.length.toLocaleString()} 個物品…（${d}/${n}）`, d / n * 0.5));
+    const net0 = UC.net;
+    const agg = (await UC.get('agg', scope, ids, { soft: true, onProgress: (d, n) => progress(`第 1 步：快速篩選 ${ids.length.toLocaleString()} 個物品…（${d}/${n}）`, d / n * 0.5) })).d;
     const pick = r => r && (r.world || r.dc || r.region);
     const cand = [], AG = {};
-    agg.forEach(a => a && (a.results || []).forEach(r => {
+    Object.values(agg).forEach(r => {
+      if (!r) return;
       AG[r.itemId] = r;
       const parts = q === 'any' ? [r.nq, r.hq] : [r[q]];
       let vel = 0, turn = 0, last = 0;
@@ -1916,15 +1977,14 @@ async function scan() {
         if (rp && rp.timestamp > last) last = rp.timestamp;
       });
       if (vel >= minVol && Date.now() - last < 3 * 864e5) cand.push({ id: r.itemId, vel, turn });
-    }));
+    });
     if (!cand.length) { progress('沒有符合條件的物品，試試降低「每天至少賣出」'); return; }
     // 粗估「做來賣」的利潤：直接材料全用市場最低價／NPC 價買，避免高利潤但成交額不大的成品（例如料理）被漏掉
     const est = {}, craftC = cand.filter(c => RECIPES[c.id]);
     if (craftC.length) {
       const ing = new Set(); craftC.forEach(c => RECIPES[c.id][0].i.forEach(([g]) => { if (!AG[g] && ITEMS[g] && ITEMS[g][1]) ing.add(g); }));
-      const il = [...ing], ic2 = []; for (let i = 0; i < il.length; i += 100) ic2.push(il.slice(i, i + 100));
-      const ia = await pool(ic2.map(c => () => getJSON(`${API}/aggregated/${encodeURIComponent(scope)}/${c.join(',')}`).catch(() => null)), 6, (d, n) => progress(`第 1 步：粗估製作利潤（讀取材料價格 ${d}/${n}）…`, 0.5));
-      ia.forEach(a => a && (a.results || []).forEach(r => AG[r.itemId] = r));
+      const ia = (await UC.get('agg', scope, [...ing], { soft: true, onProgress: (d, n) => progress(`第 1 步：粗估製作利潤（讀取材料價格 ${d}/${n}）…`, 0.5) })).d;
+      Object.values(ia).forEach(r => { if (r) AG[r.itemId] = r; });
       const lowOf = g => { const r = AG[g], p = r && r.nq, ml = pick(p && p.minListing), av = pick(p && p.averageSalePrice); const m = ml && ml.price || av && av.price || null; const npc = ITEMS[g] && ITEMS[g][3] && (DATA.vend[g] || []).length ? ITEMS[g][3] : null; return npc && m ? Math.min(npc, m) : npc || m; };
       craftC.forEach(c => {
         const r = RECIPES[c.id][0], a = AG[c.id], p = a && (q === 'nq' ? a.nq : a.hq && pick(a.hq.averageSalePrice) ? a.hq : a.nq), av = pick(p && p.averageSalePrice), ml = pick(p && p.minListing);
@@ -1943,27 +2003,14 @@ async function scan() {
     cand.slice().sort((a, b) => b.vel - a.vel).forEach(c => { if (sel.size < top * 2) sel.add(c.id); });
     const list = [...sel];
     // 第 2 步：成交紀錄 + 目前上架
-    const hc = []; for (let i = 0; i < list.length; i += 20) hc.push(list.slice(i, i + 20));
-    const f = ['entries.pricePerUnit', 'entries.quantity', 'entries.timestamp', 'entries.hq', 'entries.buyerName'];
-    const H = {};
-    await pool(hc.map(c => async () => {
-      const ff = f.map(x => c.length > 1 ? 'items.' + x : x).join(',');
-      const j = await getJSON(`${API}/history/${encodeURIComponent(scope)}/${c.join(',')}?entriesWithin=1209600&entriesToReturn=5000&fields=${ff}`).catch(() => null);
-      if (!j) return; if (c.length > 1) Object.entries(j.items || {}).forEach(([k, v]) => H[k] = v.entries || []); else H[c[0]] = j.entries || [];
-    }), 4, (d, n) => progress(`第 2 步：分析 ${list.length} 個物品的近 14 天成交紀錄…（${d}/${n}）`, 0.5 + d / n * 0.4));
-    const Mk = {};
-    const mc = []; for (let i = 0; i < list.length; i += 50) mc.push(list.slice(i, i + 50));
-    await pool(mc.map(c => async () => {
-      const fl = ['unitsForSale', 'minPriceNQ', 'minPriceHQ'].map(x => c.length > 1 ? 'items.' + x : x).join(',');
-      const j = await getJSON(`${API}/${encodeURIComponent(scope)}/${c.join(',')}?entries=0&fields=${fl}`).catch(() => null);
-      if (!j) return; if (c.length > 1) Object.assign(Mk, j.items || {}); else Mk[c[0]] = j;
-    }), 4, (d, n) => progress(`第 3 步：讀取目前上架量…（${d}/${n}）`, 0.9 + d / n * 0.1));
+    const H = (await UC.hist(list, scope, 14, { soft: true, onProgress: (d, n) => progress(`第 2 步：分析 ${list.length} 個物品的近 14 天成交紀錄…（${d}/${n}）`, 0.5 + d / n * 0.4) })).d;
+    const Mk = (await UC.get('mkt', scope, list, { soft: true, onProgress: (d, n) => progress(`第 3 步：讀取目前上架量…（${d}/${n}）`, 0.9 + d / n * 0.1) })).d;
     MK.rows = analyse(list, H, Mk, q);
     MK.M = MK.rows.some(r => r.craft) ? await fetchMatMarket(MK.rows, scope) : null;
     calcProfits(); scoreRows(MK.rows);
     MK.meta = { scope, range: $('#mRange').selectedOptions[0].textContent.replace(/^──\s*/, ''), q, n: ids.length, cand: cand.length, at: new Date() };
     MK.shown = 50; MK.sort = null;
-    progress(`完成：${ids.length.toLocaleString()} 個物品中有 ${cand.length.toLocaleString()} 個符合條件，深入分析 ${list.length} 個（${MK.meta.at.toLocaleTimeString('zh-TW')}）`);
+    progress(`完成：${ids.length.toLocaleString()} 個物品中有 ${cand.length.toLocaleString()} 個符合條件，深入分析 ${list.length} 個（${MK.meta.at.toLocaleTimeString('zh-TW')}・${UC.net - net0 ? `查了 ${UC.net - net0} 次 API，其餘用 15 分鐘內的快取` : '全部使用 15 分鐘內的快取'}）`);
     renderMkt();
   } catch (e) {
     $('#mStatus').className = 'status err'; progress('掃描失敗：' + e.message);
@@ -2199,7 +2246,7 @@ async function batchFetch(force) {
   const need = [...ids].filter(id => marketable(id) && (force || !B.M[id]));
   // 成品的近期成交均價（用來擋掉亂價上架），失敗不影響其他功能
   const rootsNeed = items.map(it => it.id).filter(id => marketable(id) && (force || !(id in B.A)));
-  if (rootsNeed.length) getJSON(`${API}/aggregated/${encodeURIComponent(scope)}/${rootsNeed.join(',')}`).then(j => { rootsNeed.forEach(id => B.A[id] = null); (j && j.results || []).forEach(r => B.A[r.itemId] = r); renderBatch(); }).catch(() => {});
+  if (rootsNeed.length) UC.get('agg', scope, rootsNeed, { force, soft: true }).then(r => { Object.assign(B.A, r.d); renderBatch(); }).catch(() => {});
   if (!need.length) { renderBatch(); return; }
   const st = $('#bStatus'); st.className = 'status'; $('#bGo').disabled = true;
   try {
@@ -2439,19 +2486,12 @@ async function flFetch() {
   const scope = $('#scope').value, ids = flIds();
   const st = $('#fStatus'); st.className = 'status'; $('#fGo').disabled = true;
   try {
-    const ch = []; for (let i = 0; i < ids.length; i += 100) ch.push(ids.slice(i, i + 100));
-    let done = 0;
-    const M = {}, A = {};
-    await pool(ch.map(c => async () => {
-      const fl = ['lastUploadTime', 'listings.pricePerUnit', 'listings.quantity', 'listings.worldName', 'listings.hq', 'listings.listingID', 'listings.retainerName', 'unitsForSale'].map(x => c.length > 1 ? 'items.' + x : x).join(',');
-      const [m, a] = await Promise.all([
-        getJSON(`${API}/${encodeURIComponent(scope)}/${c.join(',')}?listings=100&entries=0&fields=${fl}`).catch(() => null),
-        getJSON(`${API}/aggregated/${encodeURIComponent(scope)}/${c.join(',')}`).catch(() => null)]);
-      if (m) { if (c.length > 1) Object.assign(M, m.items || {}); else M[c[0]] = m; }
-      if (a) (a.results || []).forEach(r => A[r.itemId] = r);
-      st.textContent = `查詢 ${ids.length} 個物品（花、種子、製品與材料）的價格中…（${++done}/${ch.length}）`;
-    }), 4);
-    FL.M = M; FL.A = A; FL.at = new Date(); FL.scope = scope;
+    st.textContent = `查詢 ${ids.length} 個物品（花、種子、製品與材料）的價格中…`;
+    const [m, a] = await Promise.all([
+      UC.get('mkt', scope, ids, { force: true, soft: true, onProgress: (d, n) => { st.textContent = `查詢 ${ids.length} 個物品（花、種子、製品與材料）的價格中…（${d}/${n}）`; } }),
+      UC.get('agg', scope, ids, { soft: true })]);
+    const A = {}; Object.entries(a.d).forEach(([id, r]) => { if (r) A[id] = r; });
+    FL.M = m.d; FL.A = A; FL.at = new Date(); FL.scope = scope;
     st.textContent = `完成：${FLOWERS.length} 種花、${FLOWERS.reduce((s, f) => s + f.colors.length, 0)} 個顏色（${FL.at.toLocaleTimeString('zh-TW')}・${scope}）`;
   } catch (e) { st.className = 'status err'; st.textContent = '查詢失敗：' + e.message; }
   finally { $('#fGo').disabled = false; }
@@ -2801,13 +2841,9 @@ async function alertCheck() {
   AL.busy = true; const scope = $('#scope').value, st = $('#aStatus'); st.className = 'status'; st.textContent = '檢查中…';
   try {
     const ids = [...new Set(rules.map(r => r.item))], M = {}, A = {};
-    const ch = []; for (let i = 0; i < ids.length; i += 100) ch.push(ids.slice(i, i + 100));
-    await Promise.all(ch.map(async c => {
-      const fl = ['listings.pricePerUnit', 'listings.quantity', 'listings.worldName', 'listings.hq', 'listings.listingID', 'listings.retainerName', 'lastUploadTime'].map(x => c.length > 1 ? 'items.' + x : x).join(',');
-      const [m, a] = await Promise.all([getJSON(`${API}/${encodeURIComponent(scope)}/${c.join(',')}?listings=30&entries=0&fields=${fl}`), getJSON(`${API}/aggregated/${encodeURIComponent(scope)}/${c.join(',')}`).catch(() => null)]);
-      if (c.length > 1) Object.assign(M, m.items || {}); else M[c[0]] = m;
-      (a && a.results || []).forEach(r => A[r.itemId] = r);
-    }));
+    // 上架要即時（1 分鐘內才沿用）；比較用的成交均價變化慢，用 15 分鐘快取
+    const [m, a] = await Promise.all([UC.get('mkt', scope, ids, { force: true }), UC.get('agg', scope, ids, { soft: true })]);
+    Object.assign(M, m.d); Object.entries(a.d).forEach(([id, r]) => { if (r) A[id] = r; });
     const hits = [], now = Date.now();
     rules.forEach(r => {
       const ls = (M[r.item] && M[r.item].listings || []).filter(l => r.q === 'any' || (r.q === 'hq' ? l.hq : !l.hq));
@@ -2907,7 +2943,9 @@ $('#stGo').addEventListener('click', () => stLoad(true));
 ST.H = {}; ST.q = LS.get('ffcc:starQ', {}); ST.auto = LS.get('ffcc:starAuto', 0); ST.timer = null;
 $('#stAuto').value = ST.auto;
 $('#stAuto').addEventListener('change', e => { ST.auto = +e.target.value; LS.set('ffcc:starAuto', ST.auto); stSchedule(); stStatus(); });
-function stSchedule() { clearInterval(ST.timer); ST.timer = ST.auto ? setInterval(() => stLoad(true), ST.auto * 60e3) : null; }
+// 自動刷新：頁面看不到時（切到別的分頁／縮小）暫停，切回來時若已到刷新時間就立刻更新一次
+function stSchedule() { clearInterval(ST.timer); ST.timer = ST.auto ? setInterval(() => { if (!document.hidden) stLoad(true); }, ST.auto * 60e3) : null; }
+document.addEventListener('visibilitychange', () => { if (!document.hidden && ST.auto && ST.at && Date.now() - ST.at >= ST.auto * 60e3) { stLoad(true); stSchedule(); } });
 function stStatus() {
   if (!ST.at) return;
   const m = Math.round((Date.now() - ST.at) / 60e3);
@@ -2921,13 +2959,10 @@ async function stLoad(force, only) {
   const ids = want.filter(id => force || !(id in ST.A)); if (!ST.ids.length || !ids.length) { stRender(); return; }
   const scope = $('#scope').value, st = $('#stStatus'); st.className = 'status'; st.textContent = `刷新 ${ids.length} 個道具的行情與近 14 天成交中…`; $('#stGo').disabled = true;
   try {
-    const ch = []; for (let i = 0; i < ids.length; i += 100) ch.push(ids.slice(i, i + 100));
-    const hc = []; for (let i = 0; i < ids.length; i += 20) hc.push(ids.slice(i, i + 20));
-    const f = ['entries.pricePerUnit', 'entries.quantity', 'entries.timestamp', 'entries.hq'];
+    const mk = ids.filter(marketable); ids.forEach(id => { if (!marketable(id)) ST.A[id] = null; });
     await Promise.all([
-      ...ch.map(async c => { const j = await getJSON(`${API}/aggregated/${encodeURIComponent(scope)}/${c.join(',')}`); c.forEach(id => ST.A[id] = null); (j && j.results || []).forEach(r => ST.A[r.itemId] = r); }),
-      ...hc.map(async c => { const ff = f.map(x => c.length > 1 ? 'items.' + x : x).join(','); const j = await getJSON(`${API}/history/${encodeURIComponent(scope)}/${c.join(',')}?entriesWithin=1209600&entriesToReturn=3000&fields=${ff}`).catch(() => null);
-        if (!j) return; if (c.length > 1) c.forEach(id => ST.H[id] = (j.items && j.items[id] && j.items[id].entries) || []); else ST.H[c[0]] = j.entries || []; })
+      UC.get('agg', scope, mk, { force }).then(r => Object.assign(ST.A, r.d)),
+      UC.hist(mk, scope, 14, { force, soft: true }).then(r => Object.assign(ST.H, r.d))
     ]);
     ST.at = new Date(); stStatus();
   } catch (e) { st.className = 'status err'; st.textContent = '刷新失敗：' + e.message; }
@@ -3028,7 +3063,7 @@ function fdRender() {
 }
 async function fdPrice(id) {
   FD.A[id] = 'loading';
-  try { const j = await getJSON(`${API}/aggregated/${encodeURIComponent($('#scope').value)}/${id}`); FD.A[id] = (j && j.results && j.results[0]) || null; }
+  try { FD.A[id] = (await UC.get('agg', $('#scope').value, [id])).d[id] || null; }
   catch (e) { FD.A[id] = null; }
   if (FD.open === id) fdRender();
 }
@@ -3096,9 +3131,8 @@ $('#vGo').addEventListener('click', async () => {
   const ids = new Set(); V.list.forEach(r => vTasks(r).forEach(t => { if (ITEMS[t.item] && ITEMS[t.item][1]) ids.add(t.item); }));
   const list = [...ids], st = $('#vStatus'); st.className = 'status'; $('#vGo').disabled = true;
   try {
-    const ch = []; for (let i = 0; i < list.length; i += 100) ch.push(list.slice(i, i + 100));
-    let d = 0;
-    await Promise.all(ch.map(async c => { const j = await getJSON(`${API}/aggregated/${encodeURIComponent($('#scope').value)}/${c.join(',')}`); (j && j.results || []).forEach(x => V.A[x.itemId] = x); st.textContent = `查詢 ${list.length} 種探索道具的價格中…（${++d}/${ch.length}）`; }));
+    const r = await UC.get('agg', $('#scope').value, list, { force: true, onProgress: (d, n) => { st.textContent = `查詢 ${list.length} 種探索道具的價格中…（${d}/${n}）`; } });
+    Object.entries(r.d).forEach(([id, x]) => { if (x) V.A[id] = x; });
     V.done = true; V.at = new Date(); st.textContent = `更新時間 ${V.at.toLocaleTimeString('zh-TW')}・${$('#scope').value}・賣出稅 ${Math.round(S.sellRate * 100)}%`;
   } catch (e) { st.className = 'status err'; st.textContent = '查詢失敗：' + e.message; }
   finally { $('#vGo').disabled = false; }
@@ -3140,9 +3174,10 @@ var CH = { open: {}, html: {} };
 const chPk = p => p && (p.world || p.dc || p.region);
 function chPrice(x, q) { const a = V.A[x], p = a && a[q]; if (!p) return null; const ml = chPk(p.minListing), av = chPk(p.averageSalePrice), v = chPk(p.dailySaleVelocity); const low = ml && ml.price, avg = av && av.price; return { low, avg, vel: v ? v.quantity || 0 : 0, unit: avg ? (low ? Math.min(low, avg) : avg) : null }; }
 async function chFetch(ids) {
-  const need = [...new Set(ids)].filter(x => ITEMS[x] && ITEMS[x][1] && !V.A[x]), ch = [];
-  for (let i = 0; i < need.length; i += 100) ch.push(need.slice(i, i + 100));
-  await Promise.all(ch.map(async c => { const j = await getJSON(`${API}/aggregated/${encodeURIComponent($('#scope').value)}/${c.join(',')}`); (j && j.results || []).forEach(x => V.A[x.itemId] = x); }));
+  const need = [...new Set(ids)].filter(x => ITEMS[x] && ITEMS[x][1] && !V.A[x]);
+  if (!need.length) return;
+  const r = await UC.get('agg', $('#scope').value, need);
+  Object.entries(r.d).forEach(([id, x]) => { if (x) V.A[id] = x; });
 }
 function chBuy(x) { // 其他材料：市場最低上架和 NPC 取便宜的
   if (isCrystal(x)) return $('#crystal').checked ? ((chPrice(x, 'nq') || {}).low || 0) : 0;
@@ -3255,7 +3290,7 @@ vRetRender();
     $('#taxOut').innerHTML = '<span class="dim">讀取中…</span>';
     const ws = [...$('#scope').options].slice(1).map(o => o.value);
     try {
-      const res = await Promise.all(ws.map(w => getJSON(`${API}/tax-rates?world=${encodeURIComponent(w)}`).then(j => [w, j]).catch(() => [w, null])));
+      const res = await Promise.all(ws.map(w => cachedJSON(`${API}/tax-rates?world=${encodeURIComponent(w)}`, 3600e3).then(j => [w, j]).catch(() => [w, null])));
       T = res; at = new Date(); render();
     } catch (e) { $('#taxOut').innerHTML = `<span class="err">讀取失敗：${esc(e.message)}</span>`; }
   }
