@@ -16772,10 +16772,10 @@ function drawCandles(cv,cs,hover){
   });
   // MA5
   g.strokeStyle=CSSV('--gold');g.lineWidth=1.2;g.beginPath();let st=false;
-  cs.forEach((c,i)=>{if(c.none)return;const w=cs.slice(Math.max(0,i-4),i+1).filter(z=>!z.none);if(w.length<5){st=false;return}
-    const m=w.reduce((s,z)=>s+z.c,0)/w.length;if(!st){g.moveTo(X(i),Y(m));st=true}else g.lineTo(X(i),Y(m))});
+  const real=[];cs.forEach((c,i)=>{if(c.none||c.empty)return;real.push(c.c);if(real.length<5)return; // MA5 只算有成交的 K 棒
+    const m=real.slice(-5).reduce((s,v)=>s+v,0)/5;if(!st){g.moveTo(X(i),Y(m));st=true}else g.lineTo(X(i),Y(m))});
   g.stroke();g.lineWidth=1;
-  g.fillStyle=MU;const every=Math.ceil(cs.length/10);cs.forEach((c,i)=>{if(i%every===0)g.fillText(c.lab,X(i)-14,H-5)});
+  g.fillStyle=MU;const every=Math.ceil(cs.length/10);let lastX=-1e9;cs.forEach((c,i)=>{if(i%every)return;const x=Math.max(padL,X(i)-14);if(x<lastX+g.measureText(c.lab).width+8)return;g.fillText(c.lab,x,H-5);lastX=x});
   if(hover!=null&&cs[hover]){const x=X(hover);g.strokeStyle='#8890a0';g.setLineDash([3,3]);g.beginPath();g.moveTo(x+.5,padT);g.lineTo(x+.5,vTop+volH);g.stroke();g.setLineDash([])}
   return {X,cw,padL};
 }
@@ -16800,7 +16800,7 @@ function renderShell(){
   $('#scope').innerHTML=`<option value="">陸行鳥 DC（全部）</option>`+WORLDS.map(([id,n])=>`<option value="${id}" ${S.scope==id?'selected':''}>${n}</option>`).join('');
   const r=location.hash||'#/';
   const L=(h,t,sub)=>`<a href="${h}" class="${sub?'sub ':''}${r===h||(h!=='#/'&&r.startsWith(h))?'on':''}">${t}</a>`;
-  $('#nav').innerHTML=L('#/','看盤首頁')+L('#/wall','看盤牆')+L('#/sector/','類股')+SECTORS.map(s=>L('#/sector/'+s.key,s.name,1)).join('')+
+  $('#nav').innerHTML=L('#/','看盤首頁')+L('#/wall','看盤牆')+L('#/multi','多圖看盤')+L('#/sector/','類股')+SECTORS.map(s=>L('#/sector/'+s.key,s.name,1)).join('')+S.custom.map(c=>L('#/sector/'+c.id,'★ '+esc(c.name),1)).join('')+'<a class="sub" data-custom-new="1" style="cursor:pointer">＋ 自訂類股</a>'+
     L('#/servers','伺服器')+L('#/watch','自選股')+L('#/journal','交易紀錄本')+
     `<div class="foot">資料：Universalis<br>名稱：ffxiv-datamining-tc<br>本站為非官方粉絲作品<br>FINAL FANTASY XIV © SQUARE ENIX<br>${S.cons?'成分股更新於<br>'+new Date(S.cons.t).toLocaleString('zh-TW'):''}</div>`;
   $('#upd').textContent=S.updated?(S.snapMode?'行情時間 ':'更新 ')+new Date(S.updated).toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'}):'—';
@@ -16837,6 +16837,9 @@ function renderHome(){
   const vol=[...all].sort((a,b)=>b.s.vol-a.s.vol).slice(0,10);
   const amt=[...all].sort((a,b)=>b.s.amt-a.s.amt).slice(0,10);
   const cards=[{key:null,name:'大盤指數',ids}].concat(SECTORS.map(s=>({key:s.key,name:s.name,ids:S.cons.sectors[s.key]})));
+  ensureCustomHist();
+  const customCards=S.custom.map(c=>{const ix=indexOf(c.ids);const sp=indexSeries(c.ids);
+    return `<div class="card" data-go="#/sector/${c.id}"><div class="t">★ ${esc(c.name)}</div><div class="v num ${cls(ix.chg)}">${fmt(ix.v,2)}</div><div>${pct(ix.chg)}</div><div class="note">${ix.n}／${c.ids.length} 檔計價</div>${sparkline(sp,90,30)}</div>`}).join('');
   const cardHtml=cards.map(c=>{const ix=indexOf(c.ids);const sp=indexSeries(c.ids);
     return `<div class="card ${c.key?'':'main'}" data-go="${c.key?'#/sector/'+c.key:'#/sector/'}"><div class="t">${c.name}</div>
     <div class="v num ${cls(ix.chg)}">${fmt(ix.v,2)}</div><div>${pct(ix.chg)}</div><div class="note">${ix.n} 檔計價</div>${sparkline(sp,90,30)}</div>`}).join('');
@@ -16847,6 +16850,7 @@ function renderHome(){
     <td class="num">${fmt(r.lo.p)} <span class="muted">${WN[r.lo.w]}</span></td><td class="num">${fmt(r.hi.p)} <span class="muted">${WN[r.hi.w]}</span></td><td class="num up">${fmt(r.sp,1)}%</td></tr>`).join('')||'<tr><td colspan=4 class="empty">暫無資料</td></tr>'}</table></div>`}
   $('#view').innerHTML=`<h1>看盤首頁 <span class="muted" style="font-size:13px;font-weight:400">${scopeName()}・今日（近 24 小時）對比前 7 日</span></h1>
   <div class="grid g6" style="margin-bottom:14px">${cardHtml}</div>
+  ${customCards?`<div class="grid g6" style="margin-bottom:14px">${customCards}</div>`:''}
   <div class="grid g2">
    ${rankTable(gain,{h:'成交量',f:r=>fmt(r.s.vol)},'漲幅榜','')}
    ${rankTable(loss,{h:'成交量',f:r=>fmt(r.s.vol)},'跌幅榜','')}
@@ -16873,11 +16877,16 @@ function stockTable(ids,extra=''){
   return `<table>${'<tr>'+H('name','名稱','l')+H('price','股價')+H('chg','漲跌幅')+H('vol','今日量')+H('amt','今日額')+H('avg','前 7 日均量')+'<th>類別</th></tr>'}
   ${rows.map(r=>`<tr class="row" data-go="#/item/${r.id}"><td>${nameCell(r.id)}</td><td class="num">${fmt(r.price)}</td><td>${pct(r.chg)}</td><td class="num">${fmt(r.vol)}</td><td class="num">${fmtBig(r.amt)}</td><td class="num">${fmt(r.avg,1)}</td><td class="muted">${esc(CATS[ITEM[r.id].cat]||'')}</td></tr>`).join('')||`<tr><td colspan=7 class="empty">${extra||'沒有資料'}</td></tr>`}</table>`;
 }
-function renderSector(key){
-  const ids=key?S.cons.sectors[key]:allCons();const title=key?SEC[key].name:'大盤（全部成分股）';
+async function renderSector(key,tok){
+  const custom=key&&key.startsWith('c_')?customOf(key):null;
+  if(key&&key.startsWith('c_')&&!custom){location.hash='#/sector/';return}
+  const ids=sectorIds(key);const title=custom?'★ '+esc(custom.name):key?SEC[key].name:'大盤（全部成分股）';
+  if(custom&&ids.some(id=>!S.hist[id])){$('#view').innerHTML='<div class="empty">載入自訂類股…</div>';await loadHist(ids);if(tok!==TOKEN)return}
   const ix=indexOf(ids);
   $('#view').innerHTML=`<h1>${title} <span class="muted" style="font-size:13px;font-weight:400">${scopeName()}</span></h1>
-  <div class="tabs"><a class="btn ${!key?'on':''}" href="#/sector/">大盤</a>${SECTORS.map(s=>`<a class="btn ${key===s.key?'on':''}" href="#/sector/${s.key}">${s.name}</a>`).join('')}</div>
+  <div class="tabs" style="flex-wrap:wrap"><a class="btn ${!key?'on':''}" href="#/sector/">大盤</a>${SECTORS.map(s=>`<a class="btn ${key===s.key?'on':''}" href="#/sector/${s.key}">${s.name}</a>`).join('')}
+    ${S.custom.map(c=>`<a class="btn ${key===c.id?'on':''}" href="#/sector/${c.id}">★ ${esc(c.name)}</a>`).join('')}<button class="btn" data-custom-new="1">＋ 自訂類股</button>
+    ${custom?`<button class="btn sm" data-custom-edit="${custom.id}" style="margin-left:auto">編輯成分股</button>`:''}</div>
   <div class="grid" style="grid-template-columns:280px 1fr;margin-bottom:14px">
     <div class="panel"><div class="muted">類股指數（前 7 日 = 1,000）</div><div class="num ${cls(ix.chg)}" style="font-size:34px;font-weight:700">${fmt(ix.v,2)}</div>${pct(ix.chg)}
       <div class="kv" style="margin-top:14px"><div>成分股</div><div class="num">${ids.length} 檔</div><div>今日有計價</div><div class="num">${ix.n} 檔</div>
@@ -16886,7 +16895,7 @@ function renderSector(key){
       <p class="note">已排除極端成交（與前後成交中位數相差 3 倍以上）。指數以前 7 日成交額加權，計算各成分股「今日股價／前 7 日股價」。</p></div>
     <div class="panel"><h2>指數走勢<span class="muted">近 8 日（每 24 小時一點）</span></h2><canvas id="idx" style="height:240px"></canvas></div>
   </div>
-  <div class="panel">${stockTable(ids)}</div>`;
+  <div class="panel">${stockTable(ids,custom?'這個自訂類股還沒有股票':'')}</div>`;
   drawLine($('#idx'),indexSeries(ids));
 }
 
@@ -16943,6 +16952,7 @@ async function renderItem(id,tok){
     <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
       ${it.canHq?`<div class="seg"><button data-q="0" class="${!q?'on':''}">NQ</button><button data-q="1" class="${q?'on':''}">HQ</button></div>`:''}
       <button class="btn" data-star="${id}">${S.watch.includes(id)?'★ 已加入自選':'☆ 加入自選'}</button>
+      <button class="btn" data-addcustom="${id}">加入自訂類股</button>
       <button class="btn primary" data-log="${id}">記一筆</button>
     </div>
   </div>
@@ -17004,6 +17014,119 @@ async function renderWatch(tok){
   $('#view').innerHTML=`<h1>自選股 <span class="muted" style="font-size:13px;font-weight:400">${scopeName()}・${S.watch.length} 檔</span></h1><div class="panel">${stockTable(S.watch)}</div>`;
 }
 
+/* ========== 自訂類股 ========== */
+S.custom=lsGet('aex_custom',[]);
+const customOf=k=>S.custom.find(c=>c.id===k);
+function saveCustom(){lsSet('aex_custom',S.custom)}
+function sectorIds(k){if(!k||k==='all')return allCons();if(k.startsWith('c_'))return customOf(k)?.ids||[];return S.cons.sectors[k]||[]}
+function sectorName(k){if(!k||k==='all')return '大盤';if(k.startsWith('c_'))return customOf(k)?.name||'自訂類股';return SEC[k]?.name||k}
+const customIdsAll=()=>[...new Set(S.custom.flatMap(c=>c.ids))];
+let customLoading=false;
+function ensureCustomHist(){ // 自訂類股的非成分股需要另外抓資料，抓完重畫
+  const need=customIdsAll().filter(id=>!S.hist[id]);
+  if(!need.length||customLoading)return;
+  customLoading=true;loadHist(need).then(()=>{customLoading=false;route()});
+}
+function openCustom(id){
+  const src=id?customOf(id):null;
+  const d={id:src?.id||'c_'+Date.now().toString(36),name:src?.name||'',ids:[...(src?.ids||[])]};
+  const draw=()=>{
+    $('#clist').innerHTML=d.ids.length?d.ids.map(i=>`<div class="lg" style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #1a2030">${ico(ITEM[i])}<span style="flex:1">${esc(ITEM[i]?.n)}</span><span class="muted" style="font-size:12px">${esc(CATS[ITEM[i]?.cat]||'')}</span><button class="btn sm" data-cdel="${i}">移除</button></div>`).join('')
+      :'<div class="empty" style="padding:14px">還沒有股票，用上方搜尋加入</div>';
+    $('#ccount').textContent=`${d.ids.length} 檔`;
+  };
+  $('#mbox').innerHTML=`<h2>${src?'編輯自訂類股':'新增自訂類股'}</h2>
+  <div class="form"><div>類股名稱</div><div><input id="cs_name" value="${esc(d.name)}" placeholder="例如：我的料理股、雇員採集股"></div>
+    <div>加入股票</div><div class="search" style="flex:none"><input id="cs_q" placeholder="搜尋物品名稱，按 Enter 加入" autocomplete="off"><div class="dropdown" id="cs_dd"></div></div>
+    <div>快速加入</div><div class="row2"><button class="btn sm" id="cs_watch">自選股全部</button><button class="btn sm" id="cs_clear">清空</button><span class="muted" id="ccount" style="margin-left:auto"></span></div></div>
+  <div id="clist" style="max-height:300px;overflow:auto;margin-top:12px"></div>
+  <p class="note">指數算法和內建類股相同：前 7 日 = 1,000，依成交額加權。</p>
+  <div style="display:flex;gap:8px;margin-top:10px">${src?'<button class="btn" id="cs_delete" style="color:var(--up)">刪除類股</button>':''}<span style="flex:1"></span><button class="btn" id="cs_cancel">取消</button><button class="btn primary" id="cs_save">儲存</button></div>`;
+  $('#modal').style.display='grid';draw();$('#cs_name').focus();
+  bindSearch($('#cs_q'),$('#cs_dd'),it=>{if(!d.ids.includes(it.id))d.ids.push(it.id);$('#cs_q').value='';draw()});
+  $('#clist').onclick=ev=>{const b=ev.target.closest('[data-cdel]');if(b){d.ids=d.ids.filter(x=>x!==+b.dataset.cdel);draw()}};
+  $('#cs_watch').onclick=()=>{S.watch.forEach(i=>{if(!d.ids.includes(i))d.ids.push(i)});draw()};
+  $('#cs_clear').onclick=()=>{d.ids=[];draw()};
+  $('#cs_cancel').onclick=closeModal;
+  if(src)$('#cs_delete').onclick=()=>{if(!confirm(`刪除自訂類股「${src.name}」？`))return;S.custom=S.custom.filter(c=>c.id!==src.id);saveCustom();S.wall=S.wall.filter(t=>t!=='s:'+src.id);saveWall();closeModal();location.hash='#/sector/'};
+  $('#cs_save').onclick=()=>{
+    d.name=$('#cs_name').value.trim();if(!d.name)return toast('請輸入類股名稱');if(!d.ids.length)return toast('至少加入一檔股票');
+    if(src)Object.assign(src,d);else S.custom.push(d);saveCustom();closeModal();toast('已儲存');
+    if(location.hash==='#/sector/'+d.id)route();else location.hash='#/sector/'+d.id;
+  };
+}
+function openAddToCustom(itemId){
+  $('#mbox').innerHTML=`<h2>加入自訂類股<span class="muted">${esc(ITEM[itemId].n)}</span></h2>
+  ${S.custom.length?S.custom.map(c=>`<label style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid #1a2030"><input type="checkbox" data-cid="${c.id}" ${c.ids.includes(itemId)?'checked':''}> ${esc(c.name)} <span class="muted">${c.ids.length} 檔</span></label>`).join(''):'<div class="empty">還沒有自訂類股</div>'}
+  <div style="display:flex;gap:8px;margin-top:14px"><button class="btn" id="ac_new">＋ 新增類股</button><span style="flex:1"></span><button class="btn" id="ac_cancel">取消</button><button class="btn primary" id="ac_save">儲存</button></div>`;
+  $('#modal').style.display='grid';
+  $('#ac_cancel').onclick=closeModal;
+  $('#ac_new').onclick=()=>{openCustom();bindLater(()=>{})};
+  $('#ac_save').onclick=()=>{document.querySelectorAll('[data-cid]').forEach(cb=>{const c=customOf(cb.dataset.cid);const has=c.ids.includes(itemId);
+    if(cb.checked&&!has)c.ids.push(itemId);if(!cb.checked&&has)c.ids=c.ids.filter(x=>x!==itemId)});saveCustom();closeModal();toast('已更新自訂類股')};
+}
+function bindLater(f){setTimeout(f,0)}
+
+/* ========== 多圖看盤 ========== */
+const LAYOUTS={'1x1':[1,1],'2x1':[2,1],'2x2':[2,2],'3x2':[3,2],'4x2':[4,2],'3x3':[3,3]};
+S.multi=Object.assign({layout:'3x2',mode:'day',slots:[]},lsGet('aex_multi',{}));
+function saveMulti(){lsSet('aex_multi',S.multi)}
+function fillMulti(ids){const [c,r]=LAYOUTS[S.multi.layout];const n=c*r;S.multi.slots=ids.slice(0,n);saveMulti();route()}
+async function renderMulti(tok){
+  const M=S.multi;const [c,r]=LAYOUTS[M.layout]||[3,2];const n=c*r;
+  const slots=Array.from({length:n},(_,i)=>M.slots[i]&&ITEM[M.slots[i]]?M.slots[i]:null);
+  const ids=slots.filter(Boolean);
+  if(ids.some(id=>!S.hist30[id])){$('#view').innerHTML=`<div class="empty">載入 ${ids.length} 檔 K 線…</div>`;await loadHist(ids,{within:30*DAY,store:S.hist30,size:5});if(tok!==TOKEN)return}
+  const avail=window.innerHeight-56-34-150;const ch=Math.max(150,Math.floor(avail/r)-58);
+  const opts=[['watch','自選股'],['wall','看盤牆'],['gain','今日漲幅前'],['loss','今日跌幅前'],['amt','成交額前']];
+  $('#view').innerHTML=`<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+    <h1 style="margin:0">多圖看盤 <span class="muted" style="font-size:13px;font-weight:400">${scopeName()}・${M.mode==='day'?'日 K・近 30 日':'小時 K・近 72 小時'}</span></h1>
+    <span class="seg">${Object.keys(LAYOUTS).map(k=>`<button data-mlayout="${k}" class="${M.layout===k?'on':''}" title="${LAYOUTS[k][0]*LAYOUTS[k][1]} 格">${k.replace('x','×')}</button>`).join('')}</span>
+    <span class="seg"><button data-mmode="day" class="${M.mode==='day'?'on':''}">日 K</button><button data-mmode="hour" class="${M.mode==='hour'?'on':''}">小時 K</button></span>
+    <span class="muted">快速帶入</span>${opts.map(([k,t])=>`<button class="btn sm" data-mfill="${k}">${t}${['gain','loss','amt'].includes(k)?' '+n:''}</button>`).join('')}
+    <select class="scope" id="mfillsec" style="padding:3px 8px"><option value="">類股…</option>${[...SECTORS.map(s=>[s.key,s.name]),...S.custom.map(c=>[c.id,'★ '+c.name])].map(([k,t])=>`<option value="${k}">${esc(t)}</option>`).join('')}</select>
+    <button class="btn sm" data-mfill="clear">清空</button>
+  </div>
+  <div class="grid" style="grid-template-columns:repeat(${c},minmax(0,1fr));gap:10px">
+  ${slots.map((id,i)=>{
+    if(!id)return `<div class="panel mslot empty-slot" style="height:${ch+58}px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:10px">
+      <div class="muted">第 ${i+1} 格</div><div class="search" style="width:80%;flex:none"><input id="ms_${i}" placeholder="＋ 選擇股票" autocomplete="off"><div class="dropdown" id="msd_${i}"></div></div></div>`;
+    const it=ITEM[id];const q=mainQ(id);const s=statsOf(S.hist30[id]?.e||[],q,S.scope);
+    return `<div class="panel mslot" style="padding:8px 10px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">${ico(it)}<a href="#/item/${id}" style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.n)}</a>${q?'<span class="hq">HQ</span>':''}
+        ${(S.hist30[id]?.raw||0)>=999?`<span class="tag" title="熱門物品受 999 筆上限影響，只涵蓋最近一段時間">資料僅 ${fmt(Math.max(1,(nowS()-Math.min(...(S.hist30[id].e.map(x=>x.t)||[nowS()])))/DAY),1)} 天</span>`:''}
+        <span class="num ${cls(s.chg)}" style="margin-left:auto;font-weight:700">${fmt(s.price)}</span>${pct(s.chg)}
+        <b class="star ${S.watch.includes(id)?'on':''}" data-star="${id}" title="自選股">★</b><b class="muted" style="cursor:pointer;padding:0 2px" data-mslot="${i}" title="換股票">✕</b></div>
+      <div class="chartbox" id="mbox_${i}"><canvas style="height:${ch}px"></canvas><div class="tip"></div></div></div>`}).join('')}
+  </div>`;
+  slots.forEach((id,i)=>{
+    if(id){const q=mainQ(id);const es=(S.hist30[id]?.e||[]).filter(x=>x.hq===q&&(!S.scope||x.w===S.scope));mountCandles($('#mbox_'+i),buildCandles(es,M.mode))}
+    else bindSearch($('#ms_'+i),$('#msd_'+i),it=>{M.slots[i]=it.id;saveMulti();route()});
+  });
+  $('#mfillsec').onchange=async ev=>{const k=ev.target.value;if(!k)return;const ids=sectorIds(k);await loadHist(ids);
+    fillMulti([...ids].sort((a,b)=>stats(b).amt-stats(a).amt))};
+}
+document.addEventListener('click',ev=>{
+  const t=ev.target;let el;
+  if(el=t.closest('[data-mlayout]')){S.multi.layout=el.dataset.mlayout;saveMulti();route();return}
+  if(el=t.closest('[data-mmode]')){S.multi.mode=el.dataset.mmode;saveMulti();route();return}
+  if(el=t.closest('[data-mslot]')){S.multi.slots[+el.dataset.mslot]=null;saveMulti();route();return}
+  if(el=t.closest('[data-mfill]')){
+    const k=el.dataset.mfill;const [c,r]=LAYOUTS[S.multi.layout];const n=c*r;
+    const ranked=f=>allCons().map(id=>({id,s:stats(id)})).filter(x=>x.s.price!=null&&x.s.prev.length>=3&&x.s.today.length>=2).sort(f).map(x=>x.id);
+    if(k==='clear')fillMulti([]);
+    else if(k==='watch'){if(!S.watch.length)return toast('還沒有自選股');fillMulti(S.watch)}
+    else if(k==='wall'){const ids=S.wall.filter(x=>x[0]==='i').map(x=>+x.slice(2));if(!ids.length)return toast('看盤牆上沒有個股');fillMulti(ids)}
+    else if(k==='gain')fillMulti(ranked((a,b)=>(b.s.chg??-1e9)-(a.s.chg??-1e9)));
+    else if(k==='loss')fillMulti(ranked((a,b)=>(a.s.chg??1e9)-(b.s.chg??1e9)));
+    else if(k==='amt')fillMulti(allCons().sort((a,b)=>stats(b).amt-stats(a).amt));
+    return;
+  }
+  if(el=t.closest('[data-custom-new]')){openCustom();return}
+  if(el=t.closest('[data-custom-edit]')){openCustom(el.dataset.customEdit);return}
+  if(el=t.closest('[data-addcustom]')){openAddToCustom(+el.dataset.addcustom);return}
+});
+
 /* ========== 看盤牆 ========== */
 const WALL_COLORS=['#f0b429','#22d3ee','#e879f9','#a3e635','#fb923c','#a78bfa','#f1f5f9','#f472b6','#60a5fa','#2dd4bf'];
 const WALL_MAX=10;
@@ -17012,7 +17135,7 @@ S.wall=lsGet('aex_wall',null)||['s:all',...SECTORS.map(s=>'s:'+s.key)];
 S.wallRange=lsGet('aex_wallrange','week');
 S.wallLast=S.wallLast||{};
 function saveWall(){lsSet('aex_wall',S.wall)}
-function wallLabel(tok){const [k,v]=tok.split(':');if(k==='s')return v==='all'?'大盤指數':SEC[v].name+'指數';return ITEM[+v]?.n||v}
+function wallLabel(tok){const [k,v]=tok.split(':');if(k==='s')return v==='all'?'大盤指數':(v.startsWith('c_')?'★ ':'')+sectorName(v)+'指數';return ITEM[+v]?.n||v}
 function bucketSeries(es,start,step,n){
   const out=new Array(n).fill(null),vol=new Array(n).fill(0);const bk=Array.from({length:n},()=>[]);
   es.forEach(x=>{const i=Math.floor((x.t-start)/step);if(i>=0&&i<n){bk[i].push(x);vol[i]+=x.q}});
@@ -17030,7 +17153,8 @@ function wallSeries(tok,rg){
     return {...s,start,abs:true};
   }
   if(rg==='month')return null; // 類股指數只有 8 天資料
-  const ids=v==='all'?allCons():S.cons.sectors[v];
+  if(v.startsWith('c_')&&!customOf(v))return null;
+  const ids=sectorIds(v);
   let num=new Array(R.n).fill(0),den=0;const vol=new Array(R.n).fill(0);
   ids.forEach(id=>{const st=stats(id);if(!(st.dAmt>0))return;const s=bucketSeries(st.es,start,R.step,R.n);if(!s)return;
     const p=s.p.map(v=>v??s.p[s.fi]);for(let i=0;i<R.n;i++){num[i]+=st.dAmt*p[i]/p[0];vol[i]+=s.vol[i]*p[i]}den+=st.dAmt});
@@ -17075,6 +17199,8 @@ function miniSvg(p0,vol,w=240,h=64,fi=0){
 async function renderWall(tok){
   const rg=S.wallRange;const R=WALL_RANGES[rg];
   const itemIds=S.wall.filter(t=>t[0]==='i').map(t=>+t.slice(2));
+  const cIds=S.wall.filter(t=>t.startsWith('s:c_')).flatMap(t=>sectorIds(t.slice(2))).filter(id=>!S.hist[id]);
+  if(cIds.length){await loadHist(cIds);if(tok!==TOKEN)return}
   if(itemIds.length){
     $('#view').innerHTML=`<div class="empty">載入看盤牆…</div>`;
     if(rg==='month')await loadHist(itemIds,{within:30*DAY,store:S.hist30,size:5});else await loadHist(itemIds);
@@ -17098,6 +17224,7 @@ async function renderWall(tok){
     <span class="seg">${Object.entries(WALL_RANGES).map(([k,v])=>`<button data-wrange="${k}" class="${rg===k?'on':''}">${v.label}</button>`).join('')}</span>
     <div class="search" style="flex:0 0 260px"><input id="wq" placeholder="＋ 加入物品（${S.wall.length}/${WALL_MAX}）" autocomplete="off"><div class="dropdown" id="wdd"></div></div>
     <button class="btn sm" data-wpreset="index">類股指數</button>
+    ${S.custom.length?`<select class="scope" id="wcustom" style="padding:3px 8px"><option value="">＋ 自訂類股指數…</option>${S.custom.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>`:''}
     <button class="btn sm" data-wpreset="watch">自選股</button>
     <button class="btn sm" data-wpreset="gain">今日漲幅前 5</button>
     <button class="btn sm" data-wpreset="vol">成交額前 5</button>
@@ -17130,6 +17257,7 @@ async function renderWall(tok){
     tip.style.display='block';let tx=ev.clientX-rc.left+16;if(tx>rc.width-240)tx-=260;tip.style.left=tx+'px';tip.style.top='12px'};
   cv.onmouseleave=()=>{tip.style.display='none';L=draw()};
   document.querySelectorAll('[data-wfocus]').forEach(el=>{el.onmouseenter=()=>{focus=el.dataset.wfocus;L=draw()};el.onmouseleave=()=>{focus=null;L=draw()}});
+  if($('#wcustom'))$('#wcustom').onchange=ev=>{const v=ev.target.value;if(!v)return;const t='s:'+v;if(S.wall.includes(t))return toast('已經在看盤牆上');if(S.wall.length>=WALL_MAX)return toast(`最多 ${WALL_MAX} 檔`);S.wall.push(t);saveWall();route()};
   bindSearch($('#wq'),$('#wdd'),it=>{const t='i:'+it.id;if(S.wall.includes(t))return toast('已經在看盤牆上');if(S.wall.length>=WALL_MAX)return toast(`最多 ${WALL_MAX} 檔`);S.wall.push(t);saveWall();route()});
   const tick=()=>{const c=$('#wclock');if(!c){clearInterval(S.wallClock);return}const d=new Date();c.innerHTML=`${d.toLocaleDateString('zh-TW')}<br><b>${d.toLocaleTimeString('zh-TW',{hour12:false})}</b>`};
   clearInterval(S.wallClock);S.wallClock=setInterval(tick,1000);tick();
@@ -17424,7 +17552,8 @@ async function route(){
   const h=location.hash||'#/';const [,p,arg]=h.split('/');
   try{
     if(!p)renderHome();
-    else if(p==='sector')renderSector(arg&&SEC[arg]?arg:null);
+    else if(p==='sector')await renderSector(arg&&(SEC[arg]||arg.startsWith('c_'))?arg:null,tok);
+    else if(p==='multi')await renderMulti(tok);
     else if(p==='item')await renderItem(+arg,tok);
     else if(p==='servers')renderServers();
     else if(p==='wall')await renderWall(tok);
