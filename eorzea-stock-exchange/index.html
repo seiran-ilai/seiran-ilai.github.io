@@ -16475,6 +16475,9 @@ const SECTORS=[
 const SEC=Object.fromEntries(SECTORS.map(s=>[s.key,s]));
 const CAT2SEC={};SECTORS.forEach(s=>s.cats.forEach(c=>CAT2SEC[c]=s.key));
 const PER_SECTOR=30;
+// 雲端預先整理的行情（GitHub Actions 每 30 分鐘更新）
+const SNAP_URL='https://raw.githubusercontent.com/seiran-ilai/seiran-ilai.github.io/aex-data/snapshot.json';
+const SNAP_MAX_AGE=3*3600*1000;
 const TTL=5*60*1000;
 const DAY=86400;
 
@@ -16574,7 +16577,7 @@ function cleanEntries(e){
 function itemsOf(d){if(!d)return {};if(d.items)return d.items;if(d.itemID!=null)return {[d.itemID]:d};return {}}
 
 async function loadHist(ids,{within=8*DAY,store=S.hist,size=10,onProg}={}){
-  const need=ids.filter(id=>!store[id]||Date.now()-store[id].t>TTL);
+  const need=ids.filter(id=>!store[id]||(!store[id].snap&&Date.now()-store[id].t>TTL));
   const cs=chunk(need,size);let done=0;
   await Promise.all(cs.map(async c=>{
     try{
@@ -16614,6 +16617,26 @@ async function loadMain(withOverlay){
   hideOverlay();
 }
 
+async function fetchSnapshot(){
+  const r=await fetch(SNAP_URL+'?v='+Math.floor(Date.now()/60000),{cache:'no-cache'});
+  if(!r.ok)throw new Error('snapshot HTTP '+r.status);
+  return r.json();
+}
+function applySnapshot(d){
+  S.snapMode=true;S.snapT=d.t;S.cons=d.cons;
+  const nowMs=Date.now();
+  Object.entries(d.hist).forEach(([id,h])=>{
+    S.hist[id]={t:nowMs,snap:true,raw:h.raw,removed:h.removed,e:h.e.map(r=>({t:d.now-r[0],p:r[1],q:r[2],hq:!!r[3],w:r[4],b:d.buyers[r[5]]}))};
+  });
+  S.tax={};Object.entries(d.tax||{}).forEach(([w,v])=>S.tax[w]=v);
+  S.upload={};Object.entries(d.upload||{}).forEach(([w,v])=>S.upload[w]=v);
+  S.snapTicker=d.ticker||[];S.updated=d.t;S.memo.clear();
+}
+async function trySnapshot(){
+  try{const d=await fetchSnapshot();if(d&&d.v===1&&Date.now()-d.t<SNAP_MAX_AGE){if(!S.snapT||d.t>S.snapT)applySnapshot(d);return true}}
+  catch(e){console.warn('snapshot',e)}
+  return false;
+}
 async function loadTax(){
   await Promise.all(WORLDS.map(async([id,name])=>{
     try{
@@ -16780,7 +16803,8 @@ function renderShell(){
   $('#nav').innerHTML=L('#/','看盤首頁')+L('#/wall','看盤牆')+L('#/sector/','類股')+SECTORS.map(s=>L('#/sector/'+s.key,s.name,1)).join('')+
     L('#/servers','伺服器')+L('#/watch','自選股')+L('#/journal','交易紀錄本')+
     `<div class="foot">資料：Universalis<br>名稱：ffxiv-datamining-tc<br>本站為非官方粉絲作品<br>FINAL FANTASY XIV © SQUARE ENIX<br>${S.cons?'成分股更新於<br>'+new Date(S.cons.t).toLocaleString('zh-TW'):''}</div>`;
-  $('#upd').textContent=S.updated?'更新 '+new Date(S.updated).toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'}):'—';
+  $('#upd').textContent=S.updated?(S.snapMode?'行情時間 ':'更新 ')+new Date(S.updated).toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'}):'—';
+  $('#upd').title=S.snapMode?'行情由雲端每 30 分鐘整理一次；個股頁會再即時讀取最新資料':'';
 }
 const star=id=>`<span class="star ${S.watch.includes(id)?'on':''}" data-star="${id}" title="自選股">★</span>`;
 const nameCell=(id,showStar=true)=>{const it=ITEM[id];return `<div class="name">${showStar?star(id):''}${ico(it)}<span title="${esc(it.n)}">${esc(it.n)}</span>${mainQ(id)?'<span class="hq">HQ</span>':''}</div>`};
@@ -17375,7 +17399,11 @@ function bindSearch(inp,dd,onPick){
 }
 
 /* ========== 跑馬燈 ========== */
+function renderTicker(all){
+  $('#track').innerHTML=all.slice(0,40).map(x=>{const c=x.avg?cls(x.p/x.avg-1):'flat';return `<span class="t" data-go="#/item/${x.id}"><b>${esc(ITEM[x.id]?.n)}</b>${x.hq?'<span class="hq">HQ</span>':''}<span class="num ${c}">${fmt(x.p)}</span><span class="muted num">×${fmt(x.q)}</span><span class="muted">${esc(WN[x.w]||'')}・${tstr(x.t,false)}</span></span>`}).join('');
+}
 async function loadTicker(){
+  if(S.snapMode){const a=(S.snapTicker||[]).filter(x=>ITEM[x.id]&&(!S.scope||x.w===S.scope));if(a.length>=5||!S.scope){renderTicker(a);return}}
   try{
     const sp=S.scope?`world=${S.scope}`:`dcName=${enc(DC)}`;
     const rec=await getJSON(`${API}/v2/extra/stats/most-recently-updated?${sp}&entries=50`);
@@ -17384,10 +17412,8 @@ async function loadTicker(){
     const scope=S.scope?S.scope:enc(DC);
     const d=await getJSON(`${API}/v2/${scope}/${ids.join(',')}?listings=0&entries=5`,{persist:false});
     const its=itemsOf(d);const all=[];
-    Object.values(its).forEach(it=>(it.recentHistory||[]).filter(h=>!CLOSED.has(h.worldID)&&!(it.averagePrice&&(h.pricePerUnit>it.averagePrice*EXT||h.pricePerUnit<it.averagePrice/EXT))).forEach(h=>all.push({id:it.itemID,p:h.pricePerUnit,q:h.quantity,hq:h.hq,t:h.timestamp,w:h.worldName,avg:it.averagePrice})));
-    all.sort((a,b)=>b.t-a.t);
-    const html=all.slice(0,40).map(x=>{const c=x.avg?cls(x.p/x.avg-1):'flat';return `<span class="t" data-go="#/item/${x.id}"><b>${esc(ITEM[x.id]?.n)}</b>${x.hq?'<span class="hq">HQ</span>':''}<span class="num ${c}">${fmt(x.p)}</span><span class="muted num">×${fmt(x.q)}</span><span class="muted">${esc(x.w||WN[S.scope]||'')}・${tstr(x.t,false)}</span></span>`}).join('');
-    $('#track').innerHTML=html;
+    Object.values(its).forEach(it=>(it.recentHistory||[]).filter(h=>!CLOSED.has(h.worldID)&&!(it.averagePrice&&(h.pricePerUnit>it.averagePrice*EXT||h.pricePerUnit<it.averagePrice/EXT))).forEach(h=>all.push({id:it.itemID,p:h.pricePerUnit,q:h.quantity,hq:h.hq,t:h.timestamp,w:h.worldID||S.scope,avg:it.averagePrice})));
+    all.sort((a,b)=>b.t-a.t);renderTicker(all);
   }catch(e){console.warn('ticker',e)}
 }
 
@@ -17426,19 +17452,32 @@ $('#scope').onchange=ev=>setScope(+ev.target.value);
 window.addEventListener('hashchange',()=>{$('#view').scrollTop=0;document.querySelector('main').scrollTop=0;route()});
 let rsz;window.addEventListener('resize',()=>{clearTimeout(rsz);rsz=setTimeout(route,200)});
 bindSearch($('#q'),$('#dd'),it=>{$('#q').value='';location.hash='#/item/'+it.id});
-$('#refresh').onclick=async()=>{pruneCache(true);MEM.clear();S.hist={};S.hist30={};await loadMain(true);loadTicker();loadTax();loadUpload().then(()=>location.hash.startsWith('#/servers')&&route());route()};
+$('#refresh').onclick=async()=>{pruneCache(true);MEM.clear();S.hist30={};
+  if(S.snapMode){showOverlay('重新整理','讀取最新的雲端行情');S.snapT=0;const ok=await trySnapshot();hideOverlay();if(ok){loadTicker();route();return}S.snapMode=false}
+  S.hist={};await loadMain(true);loadTicker();loadTax();loadUpload().then(()=>location.hash.startsWith('#/servers')&&route());route()};
 
 /* ========== 啟動 ========== */
 (async function init(){
   pruneCache();
   renderShell();
-  S.cons=lsGet('aex_cons',null);
-  if(!S.cons||Date.now()-S.cons.t>24*3600*1000||!S.cons.sectors)await scanConstituents();
-  await loadMain(true);
+  // 優先讀取雲端整理好的行情；讀不到或太舊才改回瀏覽器自己抓
+  showOverlay('載入行情','讀取雲端整理好的資料（每 30 分鐘更新）');setProgress(.3);
+  const snapOk=await trySnapshot();
+  if(snapOk){hideOverlay()}
+  else{
+    S.cons=lsGet('aex_cons',null);
+    if(!S.cons||Date.now()-S.cons.t>24*3600*1000||!S.cons.sectors)await scanConstituents();
+    await loadMain(true);
+  }
   route();
   loadTicker();
-  Promise.all([loadTax(),loadUpload()]).then(()=>{if(location.hash.startsWith('#/servers'))route()});
-  setInterval(async()=>{await loadMain(false);loadTicker();loadUpload();if(!$('#modal').style.display.includes('grid'))route()},TTL);
+  if(!snapOk)Promise.all([loadTax(),loadUpload()]).then(()=>{if(location.hash.startsWith('#/servers'))route()});
+  setInterval(async()=>{
+    const before=S.snapT;
+    if(S.snapMode){await trySnapshot();if(S.snapT===before)return}
+    else{await loadMain(false);loadUpload()}
+    loadTicker();if(!$('#modal').style.display.includes('grid'))route();
+  },TTL);
 })();
 </script>
 </body>
