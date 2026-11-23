@@ -71,6 +71,7 @@ tr.cur td{background:var(--soft)}
 .status{font-size:13px;color:var(--mute);margin-top:10px;min-height:20px}
 .err{color:var(--bad)}
 .note{font-size:12px;color:var(--mute);margin-top:10px;line-height:1.7}
+.drop{display:flex;flex-direction:column;align-items:center;gap:4px;border:2px dashed var(--line);border-radius:10px;padding:18px;margin:12px 0 4px;cursor:pointer;text-align:center}.drop.on,.drop:hover{border-color:var(--acc)}
 .world{margin-bottom:12px}
 .world h3{font-size:14px;margin:0 0 4px;display:flex;justify-content:space-between}
 .world h3 span{font-weight:400;color:var(--mute);font-size:12px}
@@ -226,7 +227,7 @@ button.mini{font-size:11px;padding:2px 8px;border-radius:6px;cursor:pointer;colo
 <div class="sub">繁中服道具搜尋 × 陸行鳥市場即時價格：查怎麼取得、算合成成本、整理購物清單、看什麼好賣</div>
 
 <div class="topbar">
-  <div class="tabs"><button data-tab="find" class="on">🔍 搜尋</button><button data-tab="calc">成本計算</button><button data-tab="mkt">市場趨勢</button><button data-tab="batch">購物清單 <span class="badge" id="bBadge"></span></button><button data-tab="star">⭐ 追蹤 <span class="badge" id="stBadge"></span></button><button data-tab="alert">🔔 提醒 <span class="badge" id="aBadge"></span></button><button data-tab="vent">雇員探索</button><span class="more"><button class="morebtn" id="moreBtn">更多 ▾</button><div class="moremenu" id="moreMenu" hidden><button data-tab="flower">花卉</button><button data-tab="gear">配裝</button></div></span></div>
+  <div class="tabs"><button data-tab="find" class="on">🔍 搜尋</button><button data-tab="calc">成本計算</button><button data-tab="mkt">市場趨勢</button><button data-tab="batch">購物清單 <span class="badge" id="bBadge"></span></button><button data-tab="star">⭐ 追蹤 <span class="badge" id="stBadge"></span></button><button data-tab="alert">🔔 提醒 <span class="badge" id="aBadge"></span></button><button data-tab="inv">🎒 我的庫存</button><button data-tab="vent">雇員探索</button><span class="more"><button class="morebtn" id="moreBtn">更多 ▾</button><div class="moremenu" id="moreMenu" hidden><button data-tab="flower">花卉</button><button data-tab="gear">配裝</button></div></span></div>
   <div class="tools"><button class="wbtn" id="wBtn" title="切換版面寬度"></button><button class="setbtn" id="taxBtn" title="陸行鳥每台伺服器、每個城市本週的賣出稅">％ 本週稅率</button><button class="setbtn" id="syncBtn" title="把清單、庫存、雇員等資料帶到另一台電腦">⇄ 備份／搬家</button><button class="setbtn" id="setBtn">⚙ 設定</button></div>
   <div class="card" id="taxPanel" hidden style="margin-top:10px">
     <div class="row" style="justify-content:space-between"><h2>本週賣出稅率（陸行鳥）</h2><button id="taxReload">重新整理</button></div>
@@ -268,6 +269,18 @@ button.mini{font-size:11px;padding:2px 8px;border-radius:6px;cursor:pointer;colo
 </div>
 <div class="dim setsum" id="setSum"></div>
 
+<section id="tab-inv" hidden>
+<div class="card">
+  <div class="row" style="justify-content:space-between;align-items:flex-start">
+    <div><h2>🎒 我的庫存</h2><div class="dim">匯入 Allagan Tools 匯出的 CSV（角色、雇員、公會箱都可以，一次選好幾個），算出每樣東西直接賣值多少、好不好賣。資料只存在這台電腦的瀏覽器裡。</div></div>
+    <div class="row"><button class="primary" id="invGo">⟳ 重新查價</button></div>
+  </div>
+  <label class="drop" id="invDrop"><input type="file" id="invFile" accept=".csv,text/csv" multiple hidden><b>📂 點這裡選擇，或把 CSV 檔拖進來</b><span class="dim">同檔名再匯入一次會取代舊的；不同檔案會合併計算</span></label>
+  <div id="invCfg"></div>
+  <div class="status" id="invStatus"></div>
+</div>
+<div id="invOut"></div>
+</section>
 <section id="tab-vent" hidden>
 <div class="card">
   <div class="row" style="justify-content:space-between;align-items:flex-start">
@@ -478,7 +491,7 @@ const UC = (() => {
     mkt: { size: 100, conc: 4, url: (sc, c) => `${API}/${sc}/${c.join(',')}?listings=200&entries=0&fields=${MF.map(f => multi(c) + f).join(',')}`,
       pick: (j, c) => c.length > 1 ? Object.fromEntries(c.filter(id => j.items && j.items[id]).map(id => [id, j.items[id]])) : { [c[0]]: j } },
     agg: { size: 100, conc: 6, url: (sc, c) => `${API}/aggregated/${sc}/${c.join(',')}`,
-      pick: (j, c) => { const o = {}; c.forEach(id => o[id] = null); (j.results || []).forEach(r => { if (r && r.itemId in o) o[r.itemId] = r; }); return o; } },
+      pick: (j, c) => { const o = {}, bad = new Set(j.failedItems || []); c.forEach(id => { if (!bad.has(id)) o[id] = null; }); (j.results || []).forEach(r => { if (r && r.itemId in o) o[r.itemId] = r; }); return o; } },
     hist: { size: 20, conc: 3, url: (sc, c) => `${API}/history/${sc}/${c.join(',')}?entriesWithin=2592000&entriesToReturn=5000&fields=${HF.map(f => multi(c) + 'entries.' + f).join(',')}`,
       pick: (j, c) => { const o = {}; c.forEach(id => o[id] = ((c.length > 1 ? j.items && j.items[id] : j) || {}).entries || []); return o; } },
   };
@@ -1462,6 +1475,7 @@ function ownPanel(F) {
   return `<details class="ownpanel" ${S.ownPanelOpen ? 'open' : ''}><summary>我已經有的東西${n ? `（已填 ${n} 項）` : ''}　<span class="dim">填每樣東西總共有幾個；有了半成品，它的原料會自動變成「不用準備」</span></summary>
     <div class="row" style="margin:8px 0">
       <span class="seg sm"><button data-ownview="flat" class="${mode === 'flat' ? 'on' : ''}">總表</button><button data-ownview="tree" class="${mode === 'tree' ? 'on' : ''}">照配方（樹狀）</button></span>
+      ${typeof invHas === 'function' && invHas() ? (() => { const { rows, crys } = stockRows(F), ids = [...new Set(rows.concat(crys).filter(x => !x.root).map(x => x.id))]; return `<button class="mini2" data-owninv="${ids.join(',')}" title="把「我的庫存」分頁匯入的數量填進來（只填這次用得到的）">🎒 從我的庫存帶入</button>`; })() : ''}
       <button class="mini2" data-ownpaste="1">${S.ownPaste ? '收起貼上' : '📋 整批貼上'}</button>
       ${n ? '<button class="link" data-ownclear="1">全部清空</button>' : ''}
     </div>
@@ -1806,6 +1820,11 @@ function shopHandlers(el, C) {
     else if (t.dataset.ownall) { const [id, q] = t.dataset.ownall.split(':'); P.own = P.own || {}; P.own[id] = { qty: +q, price: P.own[id] ? P.own[id].price : 0 }; C.save(); C.render(); }
     else if (t.dataset.ownclear) { P.own = {}; C.save(); C.render(); }
     else if (t.dataset.ownview) { S.ownView = t.dataset.ownview; saveShopSet(); C.render(); }
+    else if (t.dataset.owninv) {
+      const m = invMap(); let n = 0; P.own = P.own || {};
+      t.dataset.owninv.split(',').map(Number).forEach(id => { if (m[id] > 0) { P.own[id] = { qty: m[id], price: P.own[id] ? P.own[id].price : 0 }; n++; } });
+      C.save(); C.render(); toast(n ? `已從庫存帶入 ${n} 項` : '庫存裡沒有這次用得到的東西');
+    }
     else if (t.dataset.ownpaste) { S.ownPaste = !S.ownPaste; C.render(); }
     else if (t.dataset.ownimport) {
       const box = t.closest('.mform'), r = parseStock(box.querySelector('#ownPasteTxt').value);
@@ -1979,7 +1998,7 @@ function showTab(t) {
   document.querySelectorAll('.tabs button[data-tab]').forEach(x => x.classList.toggle('on', x.dataset.tab === t));
   const inMore = ['flower', 'gear'].includes(t), mb = $('#moreBtn');
   mb.classList.toggle('on', inMore); mb.textContent = inMore ? `${{ flower: '花卉', gear: '配裝' }[t]} ▾` : '更多 ▾'; $('#moreMenu').hidden = true;
-  ['find', 'calc', 'batch', 'mkt', 'flower', 'gear', 'alert', 'star', 'vent'].forEach(k => $('#tab-' + k).hidden = t !== k);
+  ['find', 'calc', 'batch', 'mkt', 'flower', 'gear', 'alert', 'star', 'vent', 'inv'].forEach(k => $('#tab-' + k).hidden = t !== k);
   window.scrollTo(0, 0);
 }
 
@@ -3312,6 +3331,394 @@ $('#vOut').addEventListener('click', async e => {
   if (V.open === id) vRender();
 });
 vRetRender();
+</script>
+<script>
+// ================= 我的庫存：匯入 Allagan Tools 的 CSV，算出直接賣值多少 =================
+const INV = Object.assign({ files: {}, offSrc: [], offLoc: ['market', 'gear', 'armory', 'glam', 'cur'], sort: 'total', minV: 0 },
+  LS.get('ffcc:inv', {}), { A: {}, at: null, scope: null, filt: '', shown: 100, cache: null });
+const saveINV = () => { INV.cache = null; LS.set('ffcc:inv', { files: INV.files, offSrc: INV.offSrc, offLoc: INV.offLoc, sort: INV.sort, minV: INV.minV }); };
+const INV_LOC = [['bag', '背包'], ['saddle', '陸行鳥鞍囊'], ['crystal', '水晶'], ['fc', '公會箱'], ['market', '雇員上架中'], ['gear', '身上裝備'], ['armory', '兵裝庫'], ['glam', '時裝箱／收藏櫃'], ['cur', '貨幣'], ['other', '其他']];
+function invLoc(l) {
+  if (/^Bag \d/i.test(l)) return 'bag';
+  if (/^Saddlebag/i.test(l)) return 'saddle';
+  if (/^Crystals/i.test(l)) return 'crystal';
+  if (/^Free Company Chest/i.test(l)) return 'fc';
+  if (/Currency|Gil/i.test(l)) return 'cur';
+  if (/^Market/i.test(l)) return 'market';
+  if (/^Equipped/i.test(l)) return 'gear';
+  if (/^Armory/i.test(l)) return 'armory';
+  if (/^(Glamour|Armoire)/i.test(l)) return 'glam';
+  return 'other';
+}
+function csvRows(t) {
+  t = t.replace(/^﻿/, ''); const out = []; let row = [], f = '', q = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (q) { if (c === '"') { if (t[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+    else if (c === '"') q = true;
+    else if (c === ',') { row.push(f); f = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && t[i + 1] === '\n') i++; row.push(f); out.push(row); row = []; f = ''; }
+    else f += c;
+  }
+  if (f || row.length) { row.push(f); out.push(row); }
+  return out.filter(r => r.some(x => x.trim()));
+}
+let invByName = null;
+function invId(nm) {
+  if (!invByName) { // 同名道具優先對到可交易的那個
+    invByName = {};
+    Object.keys(ITEMS).forEach(id => { const n = ITEMS[id][0]; if (!(n in invByName) || (ITEMS[id][1] && !ITEMS[invByName[n]][1])) invByName[n] = +id; });
+  }
+  return invByName[nm] || invByName[nm.replace(/\s/g, '')] || null;
+}
+// 一列：[來源角色／雇員, 位置, 名稱, 是否 HQ, 數量]
+function invParse(txt) {
+  const rs = csvRows(txt); if (rs.length < 2) throw new Error('檔案是空的');
+  const h = rs[0].map(x => x.trim()), col = re => h.findIndex(x => re.test(x));
+  const cN = col(/^name$|名稱/i), cQ = col(/quantity|數量/i), cT = col(/^type$|品質/i), cS = col(/^source$|來源/i), cL = col(/location|位置/i);
+  if (cN < 0 || cQ < 0) throw new Error('看不懂這個 CSV（找不到 Name／Quantity 欄位），請用 Allagan Tools 匯出的 CSV');
+  return rs.slice(1).map(r => {
+    const m = String(r[cQ] || '').replace(/,/g, '').match(/\d+/);
+    return [cS >= 0 ? String(r[cS] || '').trim() : '（未知）', cL >= 0 ? String(r[cL] || '').trim() : '', String(r[cN] || '').trim(), cT >= 0 && /HQ/i.test(r[cT] || '') ? 1 : 0, m ? +m[0] : 0];
+  }).filter(r => r[2] && r[4] > 0);
+}
+// 依目前勾選的角色／雇員與位置合併；同一格（來源＋位置＋名稱）出現在好幾個檔案只算一次，以較新的檔案為準
+function invAll() {
+  if (INV.cache) return INV.cache;
+  const seen = new Set(), srcs = {}, locs = {}, it = {}, bad = {};
+  Object.values(INV.files).sort((a, b) => b.at - a.at).forEach(f => f.rows.forEach(([s, l, nm, hq, q]) => {
+    const k = s + '|' + l + '|' + nm + '|' + hq; if (seen.has(k)) return; seen.add(k);
+    const lc = invLoc(l); srcs[s] = (srcs[s] || 0) + 1; locs[lc] = (locs[lc] || 0) + 1;
+    if (INV.offSrc.includes(s) || INV.offLoc.includes(lc)) return;
+    const id = invId(nm); if (!id) { bad[nm] = (bad[nm] || 0) + q; return; }
+    const x = it[id + ':' + hq] || (it[id + ':' + hq] = { id, hq, qty: 0, by: {} });
+    x.qty += q; x.by[s] = (x.by[s] || 0) + q;
+  }));
+  return INV.cache = { list: Object.values(it), srcs, locs, bad };
+}
+const invHas = () => Object.keys(INV.files).length > 0;
+// 每樣道具總共有幾個（NQ＋HQ），給其他分頁的「從我的庫存帶入」用
+function invMap() { const m = {}; invAll().list.forEach(x => m[x.id] = (m[x.id] || 0) + x.qty); return m; }
+
+// 查彙總行情；伺服器忙時沒查到的道具，等一下再補查（最多 3 次）
+async function iAgg(scope, ids, o) {
+  const d = (await UC.get('agg', scope, ids, o)).d;
+  for (let t = 0; t < 3; t++) {
+    const miss = ids.filter(id => !(id in d)); if (!miss.length) break;
+    await new Promise(s => setTimeout(s, 1500 * (t + 1)));
+    Object.assign(d, (await UC.get('agg', scope, miss, { soft: true })).d);
+  }
+  return d;
+}
+async function invLoad(force) {
+  const ids = [...new Set(invAll().list.map(x => x.id).filter(marketable))], st = $('#invStatus');
+  if (!ids.length) { invRender(); return; }
+  const scope = $('#scope').value; st.className = 'status'; $('#invGo').disabled = true;
+  if (INV.scope !== scope || force) INV.A = {}; // 換了伺服器範圍：舊的行情不能用
+  try {
+    Object.assign(INV.A, await iAgg(scope, ids, { force, soft: true, onProgress: (d, n) => { st.textContent = `查詢 ${ids.length} 種可交易道具的行情…（${d}/${n}）`; } })); INV.at = new Date(); INV.scope = scope;
+    st.textContent = `已更新 ${INV.at.toLocaleTimeString('zh-TW')}・${scope}・賣出稅 ${Math.round(S.sellRate * 100)}%`;
+  } catch (e) { st.className = 'status err'; st.textContent = '查價失敗：' + e.message; }
+  finally { $('#invGo').disabled = false; }
+  invRender();
+  if (INV.view !== 'sell') invLoadCraft(force);
+}
+// Universalis 彙總資料裡某個品質的：最低上架、近期平均成交、日均成交量、最後成交時間
+function iPart(id, q) {
+  const a = INV.A[id], pk = p => p && (p.world || p.dc || p.region), p = a && a[q]; if (!p) return null;
+  const ml = pk(p.minListing), av = pk(p.averageSalePrice), v = pk(p.dailySaleVelocity), rp = pk(p.recentPurchase);
+  return { low: ml && ml.price || null, avg: av && av.price || null, vel: v ? v.quantity || 0 : 0, lastT: rp && rp.timestamp || 0 };
+}
+// 直接賣：單價取「近期平均成交」與「目前最低上架」較低者（保守），扣賣出稅
+function invVal(x) {
+  if (!marketable(x.id)) return { trade: false };
+  let p = iPart(x.id, x.hq ? 'hq' : 'nq'), fb = false;
+  if (x.hq && !(p && (p.avg || p.low))) { p = iPart(x.id, 'nq'); fb = true; }
+  if (!p || !(p.avg || p.low)) return { trade: true, none: true, total: 0 };
+  const unit = p.avg && p.low ? Math.min(p.avg, p.low) : (p.avg || p.low), net = sellNet(unit);
+  return { trade: true, unit, net, total: net * x.qty, vel: p.vel, days: p.vel > 0 ? x.qty / p.vel : Infinity, stale: !p.lastT || Date.now() - p.lastT > 14 * 864e5,
+    low: p.low, avg: p.avg, list: p.low ? Math.max(1, p.low - 1) : Math.round(p.avg), fb };
+}
+const invTag = v => v.none ? ['查不到行情', 'dim'] : v.stale || !v.vel ? ['幾乎沒人買', 'neg'] : v.days <= 2 ? ['很好賣', 'pos'] : v.days <= 7 ? ['一週內賣得完', 'dim'] : ['要慢慢賣', 'neg'];
+const INV_SORT = { total: ['總值（高→低）', (a, b) => b.v.total - a.v.total], unit: ['單價（高→低）', (a, b) => (b.v.net || 0) - (a.v.net || 0)],
+  fast: ['好賣程度（好賣→難賣）', (a, b) => (a.v.stale ? 1e9 : a.v.days) - (b.v.stale ? 1e9 : b.v.days)], qty: ['數量（多→少）', (a, b) => b.qty - a.qty],
+  name: ['名稱', (a, b) => name(a.id).localeCompare(name(b.id), 'zh-Hant')] };
+
+function invRender() { invRenderCfg(); invRenderTable(); }
+function invRenderCfg() {
+  const box = $('#invCfg'); if (!invHas()) { box.innerHTML = ''; return; }
+  const all = invAll(), fileOf = s => Object.entries(INV.files).filter(([, f]) => f.rows.some(r => r[0] === s)).map(([n]) => n.replace(/\.csv$/i, '')).join('、');
+  box.innerHTML = `
+    <div class="row" style="gap:8px;margin-top:4px"><span class="dim">已匯入：</span>${Object.entries(INV.files).map(([n, f]) => `<span class="tag dim">${esc(n)}・${f.rows.length} 筆・${ago(f.at).replace('更新', '匯入')} <button class="link" data-invdel="${esc(n)}" title="移除這個檔案">✕</button></span>`).join(' ')}<button class="link" data-invclear="1">全部清除</button></div>
+    <div class="row" style="gap:12px;margin-top:8px"><span class="dim">要算進來的角色／雇員：</span>${Object.keys(all.srcs).sort().map(s => `<label class="chk"><input type="checkbox" data-isrc="${esc(s)}" ${INV.offSrc.includes(s) ? '' : 'checked'}>${esc(s)} <span class="dim">${esc(fileOf(s))}</span></label>`).join('')}</div>
+    <div class="row" style="gap:12px;margin-top:6px"><span class="dim">要算進來的位置：</span>${INV_LOC.filter(([k]) => all.locs[k]).map(([k, t]) => `<label class="chk"><input type="checkbox" data-iloc="${k}" ${INV.offLoc.includes(k) ? '' : 'checked'}>${t} <span class="dim">${all.locs[k]}</span></label>`).join('')}</div>
+    <div class="row" style="margin-top:10px">
+      <label>排序<select id="invSort">${Object.entries(INV_SORT).map(([k, v]) => `<option value="${k}" ${INV.sort === k ? 'selected' : ''}>${v[0]}</option>`).join('')}</select></label>
+      <label>只看總值至少<select id="invMin">${[[0, '不限'], [1000, '1,000'], [10000, '1 萬'], [100000, '10 萬']].map(([v, t]) => `<option value="${v}" ${+INV.minV === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <label>搜尋<input id="invFilt" value="${esc(INV.filt)}" placeholder="道具名稱" style="width:140px"></label>
+    </div>`;
+}
+function invRenderTable() {
+  const out = $('#invOut');
+  if (!invHas()) {
+    out.innerHTML = `<div class="card empty"><h2>還沒有匯入庫存</h2><p class="dim">在遊戲裡用 Allagan Tools 打開物品清單，選好要看的角色／雇員／公會箱後匯出成 CSV，再把檔案拖到上面的框框。<br>雇員的東西要先在遊戲裡打開過一次雇員，Allagan Tools 才會記錄。</p></div>`; return;
+  }
+  if (!INV.at) { out.innerHTML = ''; return; }
+  const seg = `<div class="row" style="margin-bottom:12px"><span class="seg">${[['sell', '💰 直接賣值多少'], ['craft', '🔨 拿去做什麼'], ['plan', '📋 最佳行動方案']].map(([k, t]) => `<button data-iview="${k}" class="${INV.view === k ? 'on' : ''}">${t}</button>`).join('')}</span></div>`;
+  if (INV.view !== 'sell') { out.innerHTML = seg + (INV.cl ? '<div class="card dim">查詢配方的成品與材料行情中…</div>' : invCraftHtml()); return; }
+  const all = invAll();
+  const rows =all.list.map(x => Object.assign({}, x, { v: invVal(x) })), trade = rows.filter(r => r.v.trade), untr = rows.filter(r => !r.v.trade);
+  const sum = f => trade.filter(f).reduce((s, r) => s + (r.v.total || 0), 0);
+  const tot = sum(r => !r.v.none && !r.v.stale && r.v.vel), fast = sum(r => !r.v.none && !r.v.stale && r.v.days <= 7), slow = trade.filter(r => !r.v.none && (r.v.stale || !r.v.vel));
+  const q = INV.filt.trim();
+  let list = trade.filter(r => (!q || name(r.id).includes(q)) && (r.v.total || 0) >= (+INV.minV || 0)).sort(INV_SORT[INV.sort][1]);
+  const n = list.length; list = list.slice(0, INV.shown);
+  const box = (k, v, d) => `<div class="box"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${d}</div></div>`;
+  const badN = Object.keys(all.bad).length;
+  out.innerHTML = seg + `<div class="grid" style="margin-bottom:16px">
+      ${box('賣得掉的庫存總值（扣稅後）', fmt(tot), `${trade.length} 種可交易道具，不含幾乎沒人買的`)}
+      ${box('一週內賣得完的部分', fmt(fast), tot ? `佔 ${Math.round(fast / tot * 100)}%` : '')}
+      ${box('幾乎沒人買', slow.length + ' 種', `合計 ${fmt(slow.reduce((s, r) => s + (r.v.total || 0), 0))}（行情參考價，不一定賣得掉）`)}
+      ${box('不能交易', untr.length + ' 種', badN ? `另有 ${badN} 種道具名稱對不上` : '')}
+    </div>
+    <div class="card"><div style="overflow-x:auto"><table class="mt"><thead><tr><th>#</th><th>道具</th><th class="n">數量</th><th class="n">扣稅後單價</th><th class="n">近期成交／最低上架</th><th class="n">建議上架價</th><th class="n">扣稅後總值</th><th class="n">日均成交</th><th class="n">約幾天賣完</th></tr></thead><tbody>
+    ${list.map((r, i) => { const v = r.v, [tg, tc] = invTag(v), by = Object.entries(r.by);
+      return `<tr><td class="dim">${i + 1}</td>
+        <td><span class="nm">${ic(r.id)}${esc(name(r.id))}</span>${cpBtn(r.id)} ${r.hq ? '<span class="tag t-hq">HQ</span> ' : ''}<span class="tag ${tc}">${tg}</span>${v.fb ? ' <span class="dim" title="HQ 沒有成交資料，暫用 NQ 行情">（用 NQ 行情估）</span>' : ''}</td>
+        <td class="n">${r.qty.toLocaleString()}${by.length > 1 ? `<div class="dim">${by.map(([s, c]) => `${esc(s)} ${c}`).join('・')}</div>` : `<div class="dim">${esc(by[0][0])}</div>`}</td>
+        <td class="n">${v.none ? '—' : fmt(v.net)}</td>
+        <td class="n">${v.none ? '—' : `${fmt(v.avg)} <span class="dim">／</span> ${fmt(v.low)}`}</td>
+        <td class="n">${v.none ? '—' : fmt(v.list)}</td>
+        <td class="n"><b>${v.none ? '—' : fmt(v.total)}</b></td>
+        <td class="n">${v.none ? '—' : v.vel < 10 ? (+v.vel.toFixed(1)).toString() : fmt(v.vel)}</td>
+        <td class="n">${v.none || v.stale || !isFinite(v.days) ? '—' : v.days < 1 ? '1 天內' : `${Math.ceil(v.days)} 天`}</td></tr>`; }).join('')}
+    </tbody></table></div>
+    ${n > INV.shown ? `<div style="margin-top:10px;text-align:center"><button data-invmore="1">顯示更多（還有 ${n - INV.shown} 項）</button></div>` : ''}
+    <div class="note">扣稅後單價＝「近期平均成交價」與「目前最低上架價」取較低者，再扣本週賣出稅 ${Math.round(S.sellRate * 100)}%（稅率在右上角「％ 本週稅率」設定）。建議上架價＝最低上架價 −1。
+      約幾天賣完＝你的數量 ÷ 整個市場的日均成交量；實際上還要跟其他賣家搶，通常會更久。「幾乎沒人買」＝14 天內沒有成交紀錄或日均成交是 0，總值只是參考。</div></div>
+    ${untr.length ? `<details class="card"><summary>不能交易的道具（${untr.length} 種）</summary><div class="dim" style="margin-top:8px;line-height:2">${untr.sort((a, b) => b.qty - a.qty).map(r => `${ic(r.id)}${esc(name(r.id))}${r.hq ? ' HQ' : ''} ×${r.qty}`).join('　')}</div></details>` : ''}
+    ${badN ? `<details class="card"><summary>名稱對不上的道具（${badN} 種）</summary><div class="dim" style="margin-top:8px;line-height:2">${Object.entries(all.bad).map(([nm, c]) => `${esc(nm)} ×${c}`).join('　')}</div><div class="note">通常是不能交易的道具或新版本道具；遊戲改版後跑一次資料更新就會對上。</div></details>` : ''}`;
+}
+// ----- 拿去做什麼／最佳行動方案 -----
+// 核心觀念：庫存不是免費的。拿庫存去做東西的成本＝把它直接賣掉能拿到的錢；賣不掉的庫存成本算 0；缺的材料用買價。
+Object.assign(INV, { view: 'sell', mine: true, pq: 'hq', days: 7, buy: true, cover: 30, maxK: 20, cshown: 30 }, LS.get('ffcc:invc', {}));
+const saveINVC = () => LS.set('ffcc:invc', { view: INV.view, mine: INV.mine, pq: INV.pq, days: INV.days, buy: INV.buy, cover: INV.cover, maxK: INV.maxK });
+const MAX_SHARE = 0.5; // 估計自己能賣掉的量：市場日均成交的一半（還要跟別人搶）
+// 成品賣價：HQ 優先時用 HQ 行情（沒有 HQ 成交才用 NQ）；14 天內沒成交的不算
+function iSell(id) {
+  for (const q of INV.pq === 'hq' && canHq(id) ? ['hq', 'nq'] : ['nq']) {
+    const p = iPart(id, q);
+    if (p && (p.avg || p.low) && p.vel > 0 && p.lastT && Date.now() - p.lastT < 14 * 864e5)
+      return { q, net: sellNet(p.avg && p.low ? Math.min(p.avg, p.low) : (p.avg || p.low)), list: p.low ? Math.max(1, p.low - 1) : Math.round(p.avg), vel: p.vel };
+  }
+  return null;
+}
+// 買材料：市場最低上架（含 5% 稅）與 NPC 價取便宜的；買不到回傳 null
+let iBuyMemo = {};
+function iBuy(id) {
+  if (id in iBuyMemo) return iBuyMemo[id];
+  const npc = ITEMS[id] && ITEMS[id][3] && (DATA.vend[id] || []).length ? ITEMS[id][3] : null;
+  let m = null; if (marketable(id)) { const p = iPart(id, 'nq'), h = iPart(id, 'hq'), lo = (p && (p.low || p.avg)) || (h && (h.low || h.avg)); if (lo) m = lo * 1.05; }
+  return iBuyMemo[id] = npc && m ? Math.min(npc, m) : npc || m || null;
+}
+// 每樣庫存：總數與每個的機會成本（直接賣能拿到的錢；賣不掉的算 0）
+function iOwn() {
+  const o = {};
+  invAll().list.forEach(x => { const v = invVal(x), e = o[x.id] || (o[x.id] = { qty: 0, val: 0 }); e.qty += x.qty; if (v.trade && !v.none && !v.stale && v.vel) e.val += v.total; });
+  Object.values(o).forEach(e => e.unit = e.qty ? e.val / e.qty : 0);
+  return o;
+}
+// 成品賣價比「材料全部用買的」還貴 30 倍以上、又超過 5 萬：多半是轉錢用的假成交或亂掛價，略過
+const iOdd = (r, s) => { const f = r.i.reduce((t, [g, amt]) => t + amt * (iBuy(g) || 0), 0) / r.a; return s.net > 50000 && s.net > f * 30; };
+const iRecipe = id =>INV.mine && cpSet() ? myRecipe(id) : RECIPES[id][0];
+// 候選：可交易的成品，配方（只看直接材料）裡至少有一樣水晶以外的材料是我有的
+function iCands(own) {
+  const out = [];
+  for (const k in RECIPES) { const id = +k; if (!marketable(id)) continue; const r = iRecipe(id); if (r && r.i.some(([g]) => !isCrystal(g) && own[g])) out.push([id, r]); }
+  return out;
+}
+// 做 n 次的成本：庫存先用（算機會成本），不夠的用買的。buy：'all' 什麼都可以買、'crystal' 只能買水晶
+function iCost(r, n, R, own, buy) {
+  let c = 0, bc = 0; const use = [], get = [];
+  for (const [g, amt] of r.i) {
+    const need = amt * n, have = Math.min(need, R[g] || 0), lack = need - have;
+    if (have) { c += have * own[g].unit; use.push([g, have]); }
+    if (lack) {
+      if (!(buy === 'all' || isCrystal(g))) return null;
+      const p = iBuy(g); if (p == null) return null; c += lack * p; bc += lack * p; get.push([g, lack, p]);
+    }
+  }
+  return { c, bc, use, get };
+}
+async function invLoadCraft(force) {
+  if (INV.cl) return;
+  const own = iOwn(), need = new Set();
+  iCands(own).forEach(([id, r]) => { need.add(id); r.i.forEach(([g]) => need.add(g)); });
+  const ids = [...need].filter(id => marketable(id) && (force || !(id in INV.A)));
+  if (ids.length) {
+    INV.cl = true; invRenderTable(); const st = $('#invStatus');
+    try {
+      Object.assign(INV.A, await iAgg(INV.scope, ids, { soft: true, onProgress: (d, n) => { st.textContent = `查詢 ${ids.length} 種成品與材料的行情…（${d}/${n}）`; } })); ids.forEach(id => { if (!(id in INV.A)) INV.A[id] = null; });
+      st.textContent = `已更新 ${new Date().toLocaleTimeString('zh-TW')}・${INV.scope}・賣出稅 ${Math.round(S.sellRate * 100)}%`;
+    } catch (e) { st.className = 'status err'; st.textContent = '查價失敗：' + e.message; }
+    finally { INV.cl = false; }
+  }
+  invRenderTable();
+}
+const iNames = (a, own) => a.map(([g, q]) => `<span class="nowrap">${ic(g)}${esc(name(g))}×${q.toLocaleString()}</span>`).join('、');
+const iCap = (s, r) => Math.ceil(Math.max(1, s.vel * INV.days * MAX_SHARE) / r.a); // 最多做幾次（受市場銷量限制）
+function iCraftRows() {
+  iBuyMemo = {};
+  const own = iOwn(), R = {}, A = [], B = [];
+  Object.entries(own).forEach(([k, e]) => R[k] = e.qty);
+  iCands(own).forEach(([id, r]) => {
+    const s = iSell(id); if (!s || iOdd(r, s)) return;
+    const cap = iCap(s, r), out = n => n * r.a * s.net;
+    // A：只用庫存（水晶不夠可以買）
+    const nS = Math.min(...r.i.filter(([g]) => !isCrystal(g)).map(([g, amt]) => Math.floor((R[g] || 0) / amt)));
+    if (nS >= 1) { const n = Math.min(nS, cap), k = iCost(r, n, R, own, 'crystal'); if (k && out(n) - k.c > 0) A.push({ id, r, s, n, cap, nS, k, inc: out(n), gain: out(n) - k.c }); }
+    // B：補買材料做到銷量上限；庫存省下的材料錢要佔一定比例（不然就只是一般的「買材料做來賣」）
+    if (nS < cap) {
+      const k = iCost(r, cap, R, own, 'all'); if (!k || !k.get.some(([g]) => !isCrystal(g))) return;
+      let full = 0; for (const [g, amt] of r.i) { const p = iBuy(g); full += amt * cap * (p != null ? p : own[g] ? own[g].unit : 0); }
+      const cover = full > 0 ? 1 - k.bc / full : 0;
+      if (out(cap) - k.c > 0 && cover >= INV.cover / 100) B.push({ id, r, s, n: cap, cap, k, cover, inc: out(cap), gain: out(cap) - k.c });
+    }
+  });
+  A.sort((a, b) => b.gain - a.gain); B.sort((a, b) => b.gain - a.gain);
+  return { A, B, own };
+}
+// 最佳行動方案：貪婪分配。每一輪挑「多做一次最賺」的配方，一次做到某樣庫存用完或達到銷量上限，扣掉用掉的庫存再重算
+function iPlan() {
+  iBuyMemo = {};
+  const own = iOwn(), R = {}, mode = INV.buy ? 'all' : 'crystal';
+  Object.entries(own).forEach(([k, e]) => R[k] = e.qty);
+  // 每個候選記住「多做一次能多賺多少」；庫存用掉後只重算有用到那些材料的配方。庫存越用越少只會讓利潤變低，所以一開始就不賺的直接排除
+  // 每一次製作都要真的用到庫存（水晶以外），而且庫存省下的材料錢要達到設定比例；不然就只是一般的「買材料做來賣」，不是消化庫存
+  const upd = x => {
+    x.g = -1; if (x.left < 1 || (plan.size >= INV.maxK && !plan.has(x.id))) return;
+    const k = iCost(x.r, 1, R, own, mode); if (!k || !k.use.some(([g]) => !isCrystal(g))) return;
+    if (x.full > 0 && 1 - k.bc / x.full < INV.cover / 100) return;
+    x.g = x.r.a * x.s.net - k.c;
+  };
+  const fullOf = r => r.i.reduce((t, [g, amt]) => { const p = iBuy(g); return t + amt * (p != null ? p : own[g] ? own[g].unit : 0); }, 0);
+  const plan = new Map();
+  const cands = iCands(own).map(([id, r]) => ({ id, r, s: iSell(id) })).filter(x => x.s && !iOdd(x.r, x.s)).map(x => Object.assign(x, { left: iCap(x.s, x.r), full: fullOf(x.r) }));
+  cands.forEach(upd); const live = cands.filter(x => x.g > 0), byIng = {};
+  live.forEach(x => x.r.i.forEach(([g]) => (byIng[g] || (byIng[g] = [])).push(x)));
+  for (let it = 0; it < 3000; it++) {
+    let x = null; for (const c of live) if (c.g > 0 && (!x || c.g > x.g)) x = c;
+    if (!x) break;
+    let n = x.left;
+    x.r.i.forEach(([g, amt]) => { const h = R[g] || 0; if (h > 0) n = Math.min(n, Math.max(1, Math.floor(h / amt))); });
+    const k = iCost(x.r, n, R, own, mode); if (!k) break;
+    k.use.forEach(([g, q]) => R[g] -= q); x.left -= n;
+    const p = plan.get(x.id) || { id: x.id, r: x.r, s: x.s, n: 0, c: 0, use: {}, get: {} };
+    p.n += n; p.c += k.c; k.use.forEach(([g, q]) => p.use[g] = (p.use[g] || 0) + q); k.get.forEach(([g, q, pr]) => { const e = p.get[g] || (p.get[g] = [0, 0]); e[0] += q; e[1] += q * pr; });
+    plan.set(x.id, p);
+    // 品項數到上限時，其他還沒排進來的全部停用
+    if (plan.size >= INV.maxK) live.forEach(c => { if (!plan.has(c.id)) c.g = -1; });
+    const dirty = new Set([x]); k.use.forEach(([g]) => (byIng[g] || []).forEach(c => dirty.add(c))); dirty.forEach(upd);
+  }
+  const crafts = [...plan.values()].map(p => Object.assign(p, { inc: p.n * p.r.a * p.s.net, bc: Object.values(p.get).reduce((t, e) => t + e[1], 0) })).map(p => Object.assign(p, { gain: p.inc - p.c })).sort((a, b) => b.gain - a.gain);
+  // 剩下的庫存：先扣掉用掉的（NQ 先扣），再算直接賣
+  const used = {}; Object.entries(own).forEach(([k, e]) => { if (e.qty - R[k] > 0) used[k] = e.qty - R[k]; });
+  const left = invAll().list.slice().sort((a, b) => a.hq - b.hq).map(x => { const u = Math.min(used[x.id] || 0, x.qty); if (u) used[x.id] -= u; return Object.assign({}, x, { qty: x.qty - u }); }).filter(x => x.qty > 0).map(x => Object.assign(x, { v: invVal(x) }));
+  const sell = left.filter(x => x.v.trade && !x.v.none && !x.v.stale && x.v.vel).sort((a, b) => b.v.total - a.v.total);
+  const keep = left.filter(x => !sell.includes(x));
+  const shop = {}; crafts.forEach(p => Object.entries(p.get).forEach(([g, e]) => { const s = shop[g] || (shop[g] = [0, 0]); s[0] += e[0]; s[1] += e[1]; }));
+  const base = invAll().list.map(x => invVal(x)).filter(v => v.trade && !v.none && !v.stale && v.vel).reduce((t, v) => t + v.total, 0);
+  return { crafts, sell, keep, shop, base };
+}
+function invCraftHtml() {
+  const cfg = `<div class="card"><div class="row">
+      <label class="chk" title="${cpSet() ? '' : '還沒設定製作職業等級：到「市場趨勢」分頁的「我的製作職業」填寫'}"><input type="checkbox" id="icMine" ${INV.mine ? 'checked' : ''} ${cpSet() ? '' : 'disabled'}>只看我做得出來的${cpSet() ? '' : '（<a href="#" data-gocp="1">先設定製作職業</a>）'}</label>
+      <label>成品賣價<select id="icPq"><option value="hq" ${INV.pq === 'hq' ? 'selected' : ''}>以 HQ 計（我做得出 HQ）</option><option value="nq" ${INV.pq === 'nq' ? 'selected' : ''}>以 NQ 計</option></select></label>
+      <label>打算幾天內賣完<select id="icDays">${[3, 7, 14].map(d => `<option value="${d}" ${INV.days === d ? 'selected' : ''}>${d} 天</option>`).join('')}</select></label>
+      ${INV.view === 'plan' ? `<label class="chk"><input type="checkbox" id="icBuy" ${INV.buy ? 'checked' : ''}>可以補買材料</label>
+        <label>最多做幾種成品<select id="icMax">${[[5, '5 種'], [10, '10 種'], [20, '20 種'], [50, '50 種'], [9999, '不限']].map(([v, t]) => `<option value="${v}" ${INV.maxK === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>` : ''}
+      <label>補買時庫存至少要省下<select id="icCover">${[0, 30, 50, 70].map(v => `<option value="${v}" ${INV.cover === v ? 'selected' : ''}>${v ? v + '% 材料錢' : '不限'}</option>`).join('')}</select></label>
+    </div>${cpSet() ? '' : '<div class="status err" style="margin-top:6px">還沒設定製作職業等級，下面會列出「所有配方」，包含你可能做不出來的高等級／秘籍配方。建議先到「市場趨勢」分頁的「🛠 我的製作職業」填好等級。</div>'}<div class="note" style="margin-top:6px">只看配方的直接材料（半成品用買的或用庫存）。拿庫存去做的成本＝那些庫存直接賣能拿到的錢（14 天沒成交、賣不掉的算 0），所以「多賺」＝比把素材直接賣掉多賺的錢。
+      每樣成品最多做到「市場日均成交 × ${INV.days} 天 × 一半」，避免做太多賣不掉。買材料用目前最低上架價＋5% 稅或 NPC 價。成品賣價比材料貴 30 倍以上（又超過 5 萬）的視為假成交或亂掛價，不列入。</div></div>`;
+  return cfg + (INV.view === 'plan' ? iPlanHtml() : iCraftHtml());
+}
+function iCraftHtml() {
+  const { A, B } = iCraftRows(), n = INV.cshown;
+  const row = (x, i, b) => `<tr><td class="dim">${i + 1}</td>
+    <td><span class="nm">${ic(x.id)}${esc(name(x.id))}</span>${cpBtn(x.id)} <span class="tag ${x.s.q === 'hq' ? 't-hq' : 'dim'}">${x.s.q.toUpperCase()}</span><div class="dim">${recipeTag(x.r)}</div></td>
+    <td class="n">${x.n.toLocaleString()} 次<div class="dim">做出 ${(x.n * x.r.a).toLocaleString()} 個${!b && x.nS > x.n ? `（庫存夠做 ${x.nS} 次）` : ''}</div></td>
+    <td>${iNames(x.k.use)}${x.k.get.length ? `<div class="dim">要買：${iNames(x.k.get)}</div>` : ''}</td>
+    <td class="n">${fmt(x.inc)}<div class="dim">上架 ${fmt(x.s.list)}／個</div></td>
+    <td class="n">${fmt(x.k.c - x.k.bc)}${b ? `<div class="dim">買材料 ${fmt(x.k.bc)}</div>` : x.k.bc ? `<div class="dim">買水晶 ${fmt(x.k.bc)}</div>` : ''}</td>
+    <td class="n"><b class="pos">+${fmt(x.gain)}</b>${b ? `<div class="dim">庫存省 ${Math.round(x.cover * 100)}%</div>` : ''}</td>
+    <td class="n">${x.s.vel < 10 ? (+x.s.vel.toFixed(1)).toString() : fmt(x.s.vel)}</td></tr>`;
+  const tbl = (L, b, title, hint) => `<div class="card"><h2>${title}（${L.length}）</h2><div class="hint">${hint}</div>${L.length ? `<div style="overflow-x:auto"><table class="mt"><thead><tr><th>#</th><th>成品</th><th class="n">做幾次</th><th>用掉的庫存</th><th class="n">成品賣得（扣稅）</th><th class="n">庫存直接賣值</th><th class="n">多賺</th><th class="n">成品日均成交</th></tr></thead><tbody>
+    ${L.slice(0, n).map((x, i) => row(x, i, b)).join('')}</tbody></table></div>${L.length > n ? `<div style="margin-top:10px;text-align:center"><button data-icmore="1">顯示更多（還有 ${L.length - n} 項）</button></div>` : ''}` : '<div class="dim">沒有找到</div>'}</div>`;
+  return tbl(A, false, '只用庫存就能做', '材料全部來自庫存（水晶不夠的話用買的）。每一項是各自獨立計算，好幾項可能搶同一批材料；要一次排好請看「📋 最佳行動方案」。') +
+    tbl(B, true, '補買一點材料再做', '庫存不夠做到銷量上限，缺的材料用買的。「庫存省 X%」＝庫存幫你省下的材料錢比例。');
+}
+function iPlanHtml() {
+  const P = iPlan(), inc = P.crafts.reduce((t, p) => t + p.inc, 0), bc = P.crafts.reduce((t, p) => t + p.bc, 0), sv = P.sell.reduce((t, x) => t + x.v.total, 0), tot = inc - bc + sv;
+  const box = (k, v, d) => `<div class="box"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${d}</div></div>`;
+  const shop = Object.entries(P.shop).sort((a, b) => b[1][1] - a[1][1]);
+  const shopTxt = shop.map(([g, e]) => `${name(+g)} ${e[0]}`).join('\n');
+  return `<div class="grid" style="margin-bottom:16px">
+      ${box('照這個方案預計拿到', fmt(tot), '成品收入 − 買材料 ＋ 剩下的直接賣（都已扣稅）')}
+      ${box('比全部直接賣多', `<span class="${tot - P.base >= 0 ? 'pos' : 'neg'}">${tot - P.base >= 0 ? '+' : ''}${fmt(tot - P.base)}</span>`, `全部直接賣約 ${fmt(P.base)}`)}
+      ${box('要做', P.crafts.length + ' 種成品', `共 ${P.crafts.reduce((t, p) => t + p.n, 0).toLocaleString()} 次製作`)}
+      ${box('要花的材料錢', fmt(bc), `${shop.length} 種材料`)}
+    </div>
+    <div class="card"><h2>🔨 1. 要做的東西（${P.crafts.length}）</h2>${P.crafts.length ? `<div style="overflow-x:auto"><table class="mt"><thead><tr><th>#</th><th>成品</th><th class="n">做幾次</th><th>用庫存</th><th>要買</th><th class="n">成品賣得（扣稅）</th><th class="n">多賺</th></tr></thead><tbody>
+      ${P.crafts.map((p, i) => `<tr><td class="dim">${i + 1}</td><td><span class="nm">${ic(p.id)}${esc(name(p.id))}</span>${cpBtn(p.id)} <span class="tag ${p.s.q === 'hq' ? 't-hq' : 'dim'}">${p.s.q.toUpperCase()}</span><div class="dim">${recipeTag(p.r)}・上架 ${fmt(p.s.list)}／個</div></td>
+        <td class="n">${p.n.toLocaleString()} 次<div class="dim">做出 ${(p.n * p.r.a).toLocaleString()} 個</div></td>
+        <td>${iNames(Object.entries(p.use).map(([g, q]) => [+g, q]))}</td><td>${Object.keys(p.get).length ? iNames(Object.entries(p.get).map(([g, e]) => [+g, e[0]])) + `<div class="dim">約 ${fmt(p.bc)}</div>` : '<span class="dim">不用買</span>'}</td>
+        <td class="n">${fmt(p.inc)}</td><td class="n"><b class="pos">+${fmt(p.gain)}</b></td></tr>`).join('')}</tbody></table></div>` : '<div class="dim">沒有比直接賣更賺的做法，建議全部直接賣。</div>'}</div>
+    ${shop.length ? `<div class="card"><div class="row" style="justify-content:space-between"><h2>🛒 2. 要買的材料（${shop.length}）</h2><button class="mini2" data-invcopy="${esc(shopTxt)}">📋 複製購物清單</button></div><div style="overflow-x:auto"><table class="lt"><thead><tr><th>材料</th><th class="n">數量</th><th class="n">約花費</th></tr></thead><tbody>
+      ${shop.map(([g, e]) => `<tr><td>${ic(+g)}${esc(name(+g))}${cpBtn(+g)}</td><td class="n">${e[0].toLocaleString()}</td><td class="n">${fmt(e[1])}</td></tr>`).join('')}</tbody></table></div><div class="note">價格是用目前最低上架價估的；要買的量多時，後面幾筆會比較貴。</div></div>` : ''}
+    <div class="card"><h2>💰 3. 剩下的直接賣（${P.sell.length}）</h2><div class="hint">扣掉要拿去做東西的部分後，剩下好賣的庫存，依總值排序。</div><div style="overflow-x:auto"><table class="lt"><thead><tr><th>道具</th><th class="n">數量</th><th class="n">建議上架價</th><th class="n">扣稅後總值</th><th class="n">約幾天賣完</th></tr></thead><tbody>
+      ${P.sell.slice(0, INV.cshown).map(x => `<tr><td>${ic(x.id)}${esc(name(x.id))}${cpBtn(x.id)} ${x.hq ? '<span class="tag t-hq">HQ</span>' : ''}</td><td class="n">${x.qty.toLocaleString()}</td><td class="n">${fmt(x.v.list)}</td><td class="n">${fmt(x.v.total)}</td><td class="n">${x.v.days < 1 ? '1 天內' : Math.ceil(x.v.days) + ' 天'}</td></tr>`).join('')}</tbody></table></div>
+      ${P.sell.length > INV.cshown ? `<div style="margin-top:10px;text-align:center"><button data-icmore="1">顯示更多（還有 ${P.sell.length - INV.cshown} 項）</button></div>` : ''}</div>
+    ${P.keep.length ? `<details class="card"><summary>📦 4. 賣不掉或不能交易，先留著（${P.keep.length} 種）</summary><div class="dim" style="margin-top:8px;line-height:2">${P.keep.sort((a, b) => b.qty - a.qty).map(x => `${ic(x.id)}${esc(name(x.id))}${x.hq ? ' HQ' : ''} ×${x.qty}`).join('　')}</div></details>` : ''}`;
+}
+async function invImport(fl) {
+  const st = $('#invStatus'), ok = [], bad = [];
+  for (const f of fl) {
+    try { const rows = invParse(await f.text()); INV.files[f.name] = { at: Date.now(), rows }; ok.push(`${f.name}（${rows.length} 筆）`); }
+    catch (e) { bad.push(`${f.name}：${e.message}`); }
+  }
+  saveINV();
+  st.className = 'status' + (bad.length ? ' err' : ''); st.textContent = (ok.length ? '已匯入 ' + ok.join('、') : '') + (bad.length ? '　無法匯入：' + bad.join('；') : '');
+  if (ok.length) invLoad(); else invRender();
+}
+$('#invFile').addEventListener('change', e => { if (e.target.files.length) invImport([...e.target.files]); e.target.value = ''; });
+['dragenter', 'dragover'].forEach(k => $('#invDrop').addEventListener(k, e => { e.preventDefault(); $('#invDrop').classList.add('on'); }));
+['dragleave', 'drop'].forEach(k => $('#invDrop').addEventListener(k, e => { e.preventDefault(); $('#invDrop').classList.remove('on'); }));
+$('#invDrop').addEventListener('drop', e => { const fl = [...e.dataTransfer.files].filter(f => /\.csv$/i.test(f.name) || f.type === 'text/csv'); if (fl.length) invImport(fl); });
+$('#invGo').addEventListener('click', () => invLoad(true));
+$('#tab-inv').addEventListener('change', e => {
+  const t = e.target;
+  if (t.dataset.isrc != null) { const s = t.dataset.isrc; INV.offSrc = INV.offSrc.filter(x => x !== s); if (!t.checked) INV.offSrc.push(s); saveINV(); invLoad(); }
+  else if (t.dataset.iloc) { const k = t.dataset.iloc; INV.offLoc = INV.offLoc.filter(x => x !== k); if (!t.checked) INV.offLoc.push(k); saveINV(); invLoad(); }
+  else if (t.id === 'invSort') { INV.sort = t.value; saveINV(); invRenderTable(); }
+  else if (t.id === 'invMin') { INV.minV = +t.value; saveINV(); invRenderTable(); }
+  else if (['icMine', 'icPq', 'icDays', 'icBuy', 'icCover', 'icMax'].includes(t.id)) {
+    if (t.id === 'icMine') INV.mine = t.checked; else if (t.id === 'icPq') INV.pq = t.value; else if (t.id === 'icDays') INV.days = +t.value;
+    else if (t.id === 'icBuy') INV.buy = t.checked; else if (t.id === 'icMax') INV.maxK = +t.value; else INV.cover = +t.value;
+    saveINVC(); INV.cshown = 30; t.id === 'icMine' ? invLoadCraft() : invRenderTable();
+  }
+});
+$('#tab-inv').addEventListener('input', e => { if (e.target.id === 'invFilt') { INV.filt = e.target.value; INV.shown = 100; invRenderTable(); } });
+$('#tab-inv').addEventListener('click', async e => {
+  if (e.target.closest('[data-gocp]')) { e.preventDefault(); showTab('mkt'); $('#cpBox').open = true; return; }
+  const t = e.target.closest('button'); if (!t) return;
+  if (t.dataset.iview) { INV.view = t.dataset.iview; INV.cshown = 30; saveINVC(); if (INV.view === 'sell') invRenderTable(); else invLoadCraft(); return; }
+  if (t.dataset.icmore) { INV.cshown += 30; invRenderTable(); return; }
+  if (t.dataset.invcopy != null) { toast((await copyText(t.dataset.invcopy)) ? '已複製購物清單' : '複製失敗'); return; }
+  if (t.dataset.invdel) { delete INV.files[t.dataset.invdel]; saveINV(); invLoad(); }
+  else if (t.dataset.invclear) { if (confirm('要清除所有匯入的庫存資料嗎？')) { INV.files = {}; saveINV(); invRender(); $('#invStatus').textContent = ''; } }
+  else if (t.dataset.invmore) { INV.shown += 100; invRenderTable(); }
+});
+document.querySelector('.tabs [data-tab="inv"]').addEventListener('click', () => { if (invHas() && (!INV.at || INV.scope !== $('#scope').value)) invLoad(); else { invRender(); if (INV.at && INV.view !== 'sell') invLoadCraft(); } });
 </script>
 <script>
 // ================= 備份／搬家 =================
