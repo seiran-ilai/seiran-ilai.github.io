@@ -1873,7 +1873,7 @@ function ago(t) {
 </script>
 <script>
 // ================= 市場趨勢分頁 =================
-const MK = { rows: null, view: 'score', sort: null, shown: 50, filt: '', pRoute: 'buy', pSort: 'profit', pPos: true, pStable: true, pVol: 0, pMax: 0 };
+const MK = { rows: null, view: 'score', sort: null, shown: 50, filt: '', pRoute: 'buy', pSort: 'safe', pPos: true, pStable: true, pVol: 0, pMax: 0 };
 // ----- 最好賺：現在買材料做成品的價差 -----
 async function fetchMatMarket(rows, scope) {
   const ids = new Set();
@@ -1898,12 +1898,20 @@ function calcProfits() {
       r.sell = r.sellL != null ? Math.min(r.sellM, r.sellL) : r.sellM; // 保守：行情與跟價取低
       r.profit = sellNet(r.sell) - r.cost; r.margin = r.cost > 0 ? r.profit / r.cost * 100 : null;
       r.pday = r.profit * r.vol;
+      r.sl = pSell(r); r.psafe = r.profit > 0 ? r.profit * r.sl.f : r.profit;
       r.plot = r.lot != null ? r.profit * r.lot : null; // 一筆典型成交能賺多少
       r.steps = root.o.craft.kids.filter(k => k.mode === 'craft').length;
     });
   } finally { S.M = keep.M; S.P = keep.P; S.overrides = keep.o; S.picked = keep.picked; }
 }
-const PSORT = { profit: ['每個利潤', (a, b) => b.profit - a.profit], plot: ['每筆成交可賺（考慮大量購買）', (a, b) => (b.plot ?? -1e12) - (a.plot ?? -1e12)], margin: ['利潤率', (a, b) => b.margin - a.margin], pday: ['市場每日利潤空間', (a, b) => b.pday - a.pday] };
+// 好賣程度：假設一次做 P_BATCH 個，連同市場上已在賣的量，照日銷量要幾天賣完；超過 P_OK_DAYS 天、或每天賣不到 1 個的打折
+const P_BATCH = 5, P_OK_DAYS = 3;
+function pSell(r) {
+  const days = r.vol > 0 ? ((r.units || 0) + P_BATCH) / r.vol : Infinity, hard = r.vol < 1;
+  return { days, hard, f: hard ? 0 : Math.min(1, r.vol / P_BATCH) * Math.min(1, P_OK_DAYS / days) };
+}
+const pTag = r => { const s = r.sl; if (!s) return ''; return s.hard ? '<div class="neg" style="font-size:11px">很難賣</div>' : s.days <= P_OK_DAYS ? '<div class="pos" style="font-size:11px">好賣</div>' : s.days <= 7 ? `<div class="dim" style="font-size:11px">約 ${Math.ceil(s.days)} 天賣完</div>` : `<div class="neg" style="font-size:11px">要排 ${s.days === Infinity ? '很久' : Math.ceil(s.days) + ' 天'}</div>`; };
+const PSORT = { safe: ['好賣的利潤（賣不動的打折）', (a, b) => b.psafe - a.psafe || b.profit - a.profit], profit: ['每個利潤', (a, b) => b.profit - a.profit], plot: ['每筆成交可賺（考慮大量購買）', (a, b) => (b.plot ?? -1e12) - (a.plot ?? -1e12)], margin: ['利潤率', (a, b) => b.margin - a.margin], pday: ['市場每日利潤空間', (a, b) => b.pday - a.pday] };
 function renderProfit(rows) {
   const pc = v => v == null ? '—' : `<span class="${v > 0 ? 'pos' : 'neg'}">${v > 0 ? '+' : ''}${v.toFixed(0)}%</span>`;
   rows = rows.filter(r => r.profit != null && (!MK.pPos || r.profit > 0) && r.days >= (MK.pStable ? 10 : 0) && r.vol >= (+MK.pVol || 0) && (!+MK.pMax || r.cost <= +MK.pMax)).sort(PSORT[MK.pSort][1]);
@@ -1928,11 +1936,11 @@ function renderProfit(rows) {
       <td class="n">${r.lot == null ? '—' : r.lot.toLocaleString()}<div class="dim">大單 ${r.big == null ? '—' : Math.round(r.big * 100) + '%'}</div></td>
       <td class="n">${r.plot == null ? '—' : `<span class="${r.plot >= 0 ? 'pos' : 'neg'}">${r.plot >= 0 ? '+' : ''}${fmt(r.plot)}</span>`}</td>
       <td class="n">${r.vol < 10 ? r.vol.toFixed(1) : fmt(r.vol)}</td><td class="n">${fmt(r.pday)}</td>
-      <td class="n">${r.days}/14</td><td class="n">${r.stock == null ? '—' : r.stock < 10 ? r.stock.toFixed(1) : fmt(r.stock)}</td>
+      <td class="n">${r.days}/14</td><td class="n">${r.stock == null ? '—' : r.stock < 10 ? r.stock.toFixed(1) : fmt(r.stock)}${pTag(r)}</td>
       <td class="n"><button class="link" data-calc="${r.id}">看明細</button><br><button class="link" data-add="${r.id}">加入清單</button></td></tr>`).join('') +
     `</tbody></table></div>
     ${n > MK.shown ? `<div style="margin-top:10px;text-align:center"><button id="mMore">顯示更多（還有 ${n - MK.shown} 項）</button></div>` : ''}
-    <div class="note">每個材料成本＝用現在的市場上架價買材料（含 5% 稅、水晶計入、可用 NPC 商店），一次產出多個的已除以產量。售價取「近 7 天成交行情」與「目前最低上架 −1」中較低者（保守估計）。市場每日利潤空間＝每個利潤 × 日均量，代表這個市場整體能賺多少，你實際能分到多少要看競爭。HQ 成品假設你做得出 HQ。</div>`;
+    <div class="note">每個材料成本＝用現在的市場上架價買材料（含 5% 稅、水晶計入、可用 NPC 商店），一次產出多個的已除以產量。售價取「近 7 天成交行情」與「目前最低上架 −1」中較低者（保守估計）。市場每日利潤空間＝每個利潤 × 日均量，代表這個市場整體能賺多少，你實際能分到多少要看競爭。「好賣的利潤」＝每個利潤 ×（日均量 ÷ ${P_BATCH}，最多 1）×（${P_OK_DAYS} ÷ 賣完天數，最多 1），賣完天數＝（市場上已在賣的數量 ＋ 你做的 ${P_BATCH} 個）÷ 日均量；每天賣不到 1 個的算「很難賣」，排到最後。HQ 成品假設你做得出 HQ。</div>`;
 }
 
 // ----- 我的製作職業：只找現在做得出來的成品 -----
@@ -3216,6 +3224,8 @@ $('#vGo').addEventListener('click', async () => {
   try {
     const r = await UC.get('agg', $('#scope').value, list, { force: true, onProgress: (d, n) => { st.textContent = `查詢 ${list.length} 種探索道具的價格中…（${d}/${n}）`; } });
     Object.entries(r.d).forEach(([id, x]) => { if (x) V.A[id] = x; });
+    st.textContent = '查詢目前上架數量中…';
+    try { const m = await UC.get('mkt', $('#scope').value, list, { soft: true }); V.M = {}; Object.entries(m.d).forEach(([id, x]) => { if (x) V.M[id] = x.unitsForSale; }); } catch (e) {}
     V.done = true; V.at = new Date(); st.textContent = `更新時間 ${V.at.toLocaleTimeString('zh-TW')}・${$('#scope').value}・賣出稅 ${Math.round(S.sellRate * 100)}%`;
   } catch (e) { st.className = 'status err'; st.textContent = '查詢失敗：' + e.message; }
   finally { $('#vGo').disabled = false; }
@@ -3224,28 +3234,38 @@ $('#vGo').addEventListener('click', async () => {
 function vPrice(id) {
   const a = V.A[id], pk = p => p && (p.world || p.dc || p.region), p = a && a.nq;
   if (!p) return null; const ml = pk(p.minListing), av = pk(p.averageSalePrice), v = pk(p.dailySaleVelocity);
-  const low = ml && ml.price, avg = av && av.price;
-  return { low, avg, vel: v ? v.quantity || 0 : 0, unit: avg ? (low ? Math.min(low, avg) : avg) : null };
+  const low = ml && ml.price, avg = av && av.price, rp = pk(p.recentPurchase), lastT = rp && rp.timestamp || 0, vel = v ? v.quantity || 0 : 0;
+  const units = V.M && V.M[id] != null ? V.M[id] : null;
+  const rpP = rp && rp.price || 0, unit = avg ? Math.min(avg, low > 0 ? low : Infinity, rpP > 0 ? rpP : Infinity) : null;
+  return { low, avg, vel, unit, units, stale: !lastT || Date.now() - lastT > 14 * 864e5, lastT };
 }
+// 好賣程度：把這趟帶回來的量加上市場上已經在賣的量，照日銷量要幾天才賣得完
+const V_HARD_VEL = 1, V_OK_DAYS = 3;
+function vSell(p, qty) {
+  if (!p || !p.unit) return { f: 0, days: Infinity, hard: true };
+  const days = p.vel > 0 ? ((p.units || 0) + qty) / p.vel : Infinity, hard = p.stale || p.vel < V_HARD_VEL;
+  return { days, hard, f: hard ? 0 : Math.min(1, p.vel / Math.max(1, qty)) * Math.min(1, V_OK_DAYS / days) };
+}
+const vTag = (p, s) => !p || !p.unit ? '' : s.hard ? '<div class="neg" style="font-size:11px">很難賣</div>' : s.days <= V_OK_DAYS ? '<div class="pos" style="font-size:11px">好賣</div>' : s.days <= 7 ? `<div class="dim" style="font-size:11px">約 ${Math.ceil(s.days)} 天賣完</div>` : `<div class="neg" style="font-size:11px">要排 ${s.days === Infinity ? '很久' : Math.ceil(s.days) + ' 天'}</div>`;
 function vRender() {
   $('#vOut').innerHTML = V.list.map(r => {
     const ts = vTasks(r).map(t => { const p = ITEMS[t.item][1] ? vPrice(t.item) : null; const val = p && p.unit ? sellNet(p.unit) * t.qty : null;
-      return Object.assign(t, { p, val, safe: val == null ? null : val * Math.min(1, (p.vel || 0) / Math.max(1, t.qty)) }); });
+      const sl = vSell(p, t.qty); return Object.assign(t, { p, val, sl, safe: val == null ? null : val * sl.f }); });
     const key = { val: x => x.val ?? -1, safe: x => x.safe ?? -1, vel: x => x.p ? x.p.vel : -1, exp: x => x.exp }[V.sort];
-    ts.sort((a, b) => key(b) - key(a) || b.lv - a.lv);
-    const best = ts.filter(t => t.safe != null).sort((a, b) => b.safe - a.safe)[0];
+    ts.sort((a, b) => key(b) - key(a) || (V.sort === 'safe' ? (b.val ?? -1) - (a.val ?? -1) : 0) || b.lv - a.lv);
+    const best = ts.filter(t => t.safe > 0).sort((a, b) => b.safe - a.safe)[0];
     const statTxt = r.job === 'war' ? `平均物品等級 ${r.il || '未填'}` : `獲得力 ${r.gath || '未填'}・鑑別力 ${r.per || '未填'}`;
     return `<div class="card"><h2>${esc(r.name)}　<span class="dim">${VCAT[r.job][1]} Lv.${r.lv}・${statTxt}・可接 ${ts.length} 種</span></h2>
-      ${best ? `<div class="verdict" style="font-size:15px">最賺：${ic(best.item)}${name(best.item)} × ${best.qty}，每趟約 <b>${fmt(best.val)}</b>${best.p && best.p.vel < best.qty ? '　<span class="neg">（每天賣不到這麼多，可能要分幾天賣）</span>' : ''}</div>` : ''}
-      ${!ts.length ? `<p class="dim">沒有符合條件的指定探索。${r.job === 'war' ? '請確認等級和平均物品等級。' : '請確認等級和獲得力（獲得力不夠的探索不會出現）。'}</p>` : `<div style="overflow-x:auto"><table class="mt"><thead><tr><th>道具</th><th class="n">需要</th><th class="n">這趟可拿</th><th class="n">市場最低</th><th class="n">成交均價</th><th class="n">日銷量</th><th class="n">每趟收益<div class="dim">扣稅後</div></th><th class="n">經驗值</th><th></th></tr></thead><tbody>${ts.slice(0, V.top).map(t => `<tr>
+      ${best ? `<div class="verdict" style="font-size:15px">最賺：${ic(best.item)}${name(best.item)} × ${best.qty}，每趟約 <b>${fmt(best.val)}</b>${best.sl.days > V_OK_DAYS ? `　<span class="neg">（連同市場上已有的 ${fmt(best.p.units || 0)} 個，約要 ${Math.ceil(best.sl.days)} 天才賣得完）</span>` : ''}</div>` : ts.some(t => t.val != null) ? '<div class="verdict neg" style="font-size:14px">目前能接的探索，帶回來的東西都很難賣（兩週內沒成交或每天賣不到 1 個），建議先做經驗或換別的雇員職業。</div>' : ''}
+      ${!ts.length ? `<p class="dim">沒有符合條件的指定探索。${r.job === 'war' ? '請確認等級和平均物品等級。' : '請確認等級和獲得力（獲得力不夠的探索不會出現）。'}</p>` : `<div style="overflow-x:auto"><table class="mt"><thead><tr><th>道具</th><th class="n">需要</th><th class="n">這趟可拿</th><th class="n">市場最低</th><th class="n">成交均價</th><th class="n">日銷量</th><th class="n">市場上架中</th><th class="n">每趟收益<div class="dim">扣稅後</div></th><th class="n">經驗值</th><th></th></tr></thead><tbody>${ts.slice(0, V.top).map(t => `<tr>
         <td>${ic(t.item)}<span class="nm">${name(t.item)}</span>${cpBtn(t.item)}${ITEMS[t.item][1] ? '' : ' <span class="tag t-free">不能交易</span>'}</td>
         <td class="n">Lv.${t.lv}<div class="dim">${t.need ? (r.job === 'war' ? '物品等級 ' : '獲得力 ') + t.need : ''}</div></td>
         <td class="n"><b>${t.qty}</b><div class="dim" title="依${r.job === 'war' ? '平均物品等級' : '鑑別力'}分 5 級：${t.qs.join(' / ')}">${t.qs.join('/')}${t.next ? `・再 ${t.next - (r.job === 'war' ? r.il : r.per)} 升一級` : ''}</div></td>
         <td class="n">${t.p ? fmt(t.p.low) : '—'}</td><td class="n">${t.p ? fmt(t.p.avg) : '—'}</td>
-        <td class="n">${t.p ? (t.p.vel < 10 ? t.p.vel.toFixed(1) : fmt(t.p.vel)) : '—'}${t.p && t.p.vel < t.qty ? '<div class="neg" style="font-size:11px">賣得慢</div>' : ''}</td>
+        <td class="n">${t.p ? (t.p.vel < 10 ? t.p.vel.toFixed(1) : fmt(t.p.vel)) : '—'}${vTag(t.p, t.sl)}</td><td class="n">${t.p && t.p.units != null ? fmt(t.p.units) : '—'}</td>
         <td class="n"><b>${t.val == null ? (t.p && t.p.low ? '<span class="dim" style="font-weight:400">近期無成交</span>' : '—') : fmt(t.val)}</b></td><td class="n">${t.exp.toLocaleString()}</td>
-        <td class="n">${vUses(t.item).length ? `<button class="mini2" data-vuse="${t.item}:${t.qty}">${V.open === t.item ? '收起' : '做成別的？'}</button> ` : ''}${ITEMS[t.item][1] ? `<button class="link" data-alertadd="${t.item}">🔔</button>` : ''}</td></tr>${V.open === t.item ? `<tr><td colspan="9" style="background:var(--soft)">${V.useHtml || '<span class="dim">計算中…</span>'}</td></tr>` : ''}`).join('')}</tbody></table></div>`}</div>`;
-  }).join('') + `<div class="card"><div class="note">「這趟可拿」依雇員的${'平均物品等級（戰鬥）或鑑別力（採集）'}分成 5 級，數字取自繁中服解包資料；「再 N 升一級」是距離下一級還差多少。每趟收益＝數量 × min(市場最低價, 成交均價) × (1 − 賣出稅)；沒有成交紀錄的不估價。「好賣的收益」＝每趟收益 ×（日銷量 ÷ 數量，最多 1），用來排除掛很高卻沒人買的道具；「最賺」也是依這個挑。隨機探索（快速探索、探索委託）不在表內。數量門檻是資料推算，若和遊戲內顯示不同，以遊戲為準。</div></div>`;
+        <td class="n">${vUses(t.item).length ? `<button class="mini2" data-vuse="${t.item}:${t.qty}">${V.open === t.item ? '收起' : '做成別的？'}</button> ` : ''}${ITEMS[t.item][1] ? `<button class="link" data-alertadd="${t.item}">🔔</button>` : ''}</td></tr>${V.open === t.item ? `<tr><td colspan="10" style="background:var(--soft)">${V.useHtml || '<span class="dim">計算中…</span>'}</td></tr>` : ''}`).join('')}</tbody></table></div>`}</div>`;
+  }).join('') + `<div class="card"><div class="note">「這趟可拿」依雇員的${'平均物品等級（戰鬥）或鑑別力（採集）'}分成 5 級，數字取自繁中服解包資料；「再 N 升一級」是距離下一級還差多少。每趟收益＝數量 × min(市場最低價, 成交均價, 最近一筆成交) × (1 − 賣出稅)；沒有成交紀錄的不估價；最近一筆成交更便宜時取最近一筆，避免單筆高價成交把均價拉高。「好賣的收益」＝每趟收益 ×（日銷量 ÷ 數量，最多 1）×（3 ÷ 賣完天數，最多 1），賣完天數＝（市場上已在賣的數量 ＋ 這趟數量）÷ 日銷量；兩週內沒有成交、或每天賣不到 1 個的算「很難賣」，好賣的收益為 0，不會被選為「最賺」。隨機探索（快速探索、探索委託）不在表內。數量門檻是資料推算，若和遊戲內顯示不同，以遊戲為準。</div></div>`;
 }
 // 雇員帶回的東西：直接賣 vs 做成別的東西賣
 let VUSES = null;
@@ -3537,44 +3557,23 @@ function iCands(own) {
   for (const k in RECIPES) { const id = +k; if (!marketable(id)) continue; const r = iRecipe(id); if (r && r.i.some(([g]) => !isCrystal(g) && own[g])) out.push([id, r]); }
   return out;
 }
-// 半成品：庫存裡有它的原料（水晶以外）才考慮自己做，只往下看一層
-const iSub = (g, own) => { if (isCrystal(g) || !RECIPES[g]) return null; const r = iRecipe(g); return r && r.i.some(([h]) => !isCrystal(h) && own[h]) ? r : null; };
-// 配方會用到的道具（直接材料＋可以用庫存自己做的半成品的原料）
-const iIngs = (r, own) => { const s = new Set(); r.i.forEach(([g]) => { s.add(g); const sr = iSub(g, own); if (sr) sr.i.forEach(([h]) => s.add(h)); }); return s; };
-// 做 n 次的成本：庫存先用（算機會成本），不夠的用買的；缺的半成品如果用庫存原料自己做比較便宜就自己做。buy：'all' 什麼都可以買、'crystal' 只能買水晶
+// 做 n 次的成本：庫存先用（算機會成本），不夠的用買的。buy：'all' 什麼都可以買、'crystal' 只能買水晶
 function iCost(r, n, R, own, buy) {
-  let c = 0, bc = 0; const use = {}, get = {}, make = [], T = {};
-  const left = g => Math.max(0, (R[g] || 0) - (T[g] || 0));
-  const take = (g, q) => { T[g] = (T[g] || 0) + q; use[g] = (use[g] || 0) + q; };
-  const purchase = (g, q, p) => { const e = get[g] || (get[g] = [0, p]); e[0] += q; bc += q * p; };
+  let c = 0, bc = 0; const use = [], get = [];
   for (const [g, amt] of r.i) {
-    const need = amt * n, have = Math.min(need, left(g)), lack = need - have;
-    if (have) { c += have * own[g].unit; take(g, have); }
-    if (!lack) continue;
-    const p = buy === 'all' || isCrystal(g) ? iBuy(g) : null, sr = iSub(g, own);
-    let sub = null;
-    if (sr) {
-      const cr = Math.ceil(lack / sr.a); sub = { c: 0, use: [], get: [] };
-      for (const [h, ha] of sr.i) {
-        const hn = ha * cr, hh = Math.min(hn, left(h)), hl = hn - hh;
-        if (hh) { sub.c += hh * own[h].unit; sub.use.push([h, hh]); }
-        if (hl) { const hp = buy === 'all' || isCrystal(h) ? iBuy(h) : null; if (hp == null) { sub = null; break; } sub.c += hl * hp; sub.get.push([h, hl, hp]); }
-      }
-      if (sub) sub.made = cr * sr.a;
-    }
-    if (sub && (p == null || sub.c < lack * p)) {
-      c += sub.c; sub.use.forEach(([h, q]) => take(h, q)); sub.get.forEach(([h, q, hp]) => purchase(h, q, hp)); make.push([g, sub.made]);
-    } else {
-      if (p == null) return null;
-      c += lack * p; purchase(g, lack, p);
+    const need = amt * n, have = Math.min(need, R[g] || 0), lack = need - have;
+    if (have) { c += have * own[g].unit; use.push([g, have]); }
+    if (lack) {
+      if (!(buy === 'all' || isCrystal(g))) return null;
+      const p = iBuy(g); if (p == null) return null; c += lack * p; bc += lack * p; get.push([g, lack, p]);
     }
   }
-  return { c, bc, use: Object.entries(use).map(([g, q]) => [+g, q]), get: Object.entries(get).map(([g, e]) => [+g, e[0], e[1]]), make };
+  return { c, bc, use, get };
 }
 async function invLoadCraft(force) {
   if (INV.cl) return;
   const own = iOwn(), need = new Set();
-  iCands(own).forEach(([id, r]) => { need.add(id); iIngs(r, own).forEach(g => need.add(g)); });
+  iCands(own).forEach(([id, r]) => { need.add(id); r.i.forEach(([g]) => need.add(g)); });
   const ids = [...need].filter(id => marketable(id) && (force || !(id in INV.A)));
   if (ids.length) {
     INV.cl = true; invRenderTable(); const st = $('#invStatus');
@@ -3600,7 +3599,7 @@ function iCraftRows() {
     if (nS >= 1) { const n = Math.min(nS, cap), k = iCost(r, n, R, own, 'crystal'); if (k && out(n) - k.c > 0) A.push({ id, r, s, n, cap, nS, k, inc: out(n), gain: out(n) - k.c }); }
     // B：補買材料做到銷量上限；庫存省下的材料錢要佔一定比例（不然就只是一般的「買材料做來賣」）
     if (nS < cap) {
-      const k = iCost(r, cap, R, own, 'all'); if (!k || !(k.get.some(([g]) => !isCrystal(g)) || k.make.length)) return;
+      const k = iCost(r, cap, R, own, 'all'); if (!k || !k.get.some(([g]) => !isCrystal(g))) return;
       let full = 0; for (const [g, amt] of r.i) { const p = iBuy(g); full += amt * cap * (p != null ? p : own[g] ? own[g].unit : 0); }
       const cover = full > 0 ? 1 - k.bc / full : 0;
       if (out(cap) - k.c > 0 && cover >= INV.cover / 100) B.push({ id, r, s, n: cap, cap, k, cover, inc: out(cap), gain: out(cap) - k.c });
@@ -3626,18 +3625,16 @@ function iPlan() {
   const plan = new Map();
   const cands = iCands(own).map(([id, r]) => ({ id, r, s: iSell(id) })).filter(x => x.s && !iOdd(x.r, x.s)).map(x => Object.assign(x, { left: iCap(x.s, x.r), full: fullOf(x.r) }));
   cands.forEach(upd); const live = cands.filter(x => x.g > 0), byIng = {};
-  live.forEach(x => iIngs(x.r, own).forEach(g => (byIng[g] || (byIng[g] = [])).push(x)));
+  live.forEach(x => x.r.i.forEach(([g]) => (byIng[g] || (byIng[g] = [])).push(x)));
   for (let it = 0; it < 3000; it++) {
     let x = null; for (const c of live) if (c.g > 0 && (!x || c.g > x.g)) x = c;
     if (!x) break;
-    // 一次做到某樣用到的庫存（含拿去做半成品的原料）用完為止
-    let n = x.left; const k1 = iCost(x.r, 1, R, own, mode); if (!k1) break;
-    k1.use.forEach(([g, q]) => { const h = R[g] || 0; if (h > 0) n = Math.min(n, Math.max(1, Math.floor(h / q))); });
+    let n = x.left;
+    x.r.i.forEach(([g, amt]) => { const h = R[g] || 0; if (h > 0) n = Math.min(n, Math.max(1, Math.floor(h / amt))); });
     const k = iCost(x.r, n, R, own, mode); if (!k) break;
     k.use.forEach(([g, q]) => R[g] -= q); x.left -= n;
-    const p = plan.get(x.id) || { id: x.id, r: x.r, s: x.s, n: 0, c: 0, use: {}, get: {}, make: {} };
+    const p = plan.get(x.id) || { id: x.id, r: x.r, s: x.s, n: 0, c: 0, use: {}, get: {} };
     p.n += n; p.c += k.c; k.use.forEach(([g, q]) => p.use[g] = (p.use[g] || 0) + q); k.get.forEach(([g, q, pr]) => { const e = p.get[g] || (p.get[g] = [0, 0]); e[0] += q; e[1] += q * pr; });
-    k.make.forEach(([g, q]) => p.make[g] = (p.make[g] || 0) + q);
     plan.set(x.id, p);
     // 品項數到上限時，其他還沒排進來的全部停用
     if (plan.size >= INV.maxK) live.forEach(c => { if (!plan.has(c.id)) c.g = -1; });
@@ -3661,7 +3658,7 @@ function invCraftHtml() {
       ${INV.view === 'plan' ? `<label class="chk"><input type="checkbox" id="icBuy" ${INV.buy ? 'checked' : ''}>可以補買材料</label>
         <label>最多做幾種成品<select id="icMax">${[[5, '5 種'], [10, '10 種'], [20, '20 種'], [50, '50 種'], [9999, '不限']].map(([v, t]) => `<option value="${v}" ${INV.maxK === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>` : ''}
       <label>補買時庫存至少要省下<select id="icCover">${[0, 30, 50, 70].map(v => `<option value="${v}" ${INV.cover === v ? 'selected' : ''}>${v ? v + '% 材料錢' : '不限'}</option>`).join('')}</select></label>
-    </div>${cpSet() ? '' : '<div class="status err" style="margin-top:6px">還沒設定製作職業等級，下面會列出「所有配方」，包含你可能做不出來的高等級／秘籍配方。建議先到「市場趨勢」分頁的「🛠 我的製作職業」填好等級。</div>'}<div class="note" style="margin-top:6px">半成品先用庫存；不夠的話，如果庫存有它的原料，會比較「直接買」和「用庫存原料自己做」取便宜的（只往下看一層）。拿庫存去做的成本＝那些庫存直接賣能拿到的錢（14 天沒成交、賣不掉的算 0），所以「多賺」＝比把素材直接賣掉多賺的錢。
+    </div>${cpSet() ? '' : '<div class="status err" style="margin-top:6px">還沒設定製作職業等級，下面會列出「所有配方」，包含你可能做不出來的高等級／秘籍配方。建議先到「市場趨勢」分頁的「🛠 我的製作職業」填好等級。</div>'}<div class="note" style="margin-top:6px">只看配方的直接材料（半成品用買的或用庫存）。拿庫存去做的成本＝那些庫存直接賣能拿到的錢（14 天沒成交、賣不掉的算 0），所以「多賺」＝比把素材直接賣掉多賺的錢。
       每樣成品最多做到「市場日均成交 × ${INV.days} 天 × 一半」，避免做太多賣不掉。買材料用目前最低上架價＋5% 稅或 NPC 價。成品賣價比材料貴 30 倍以上（又超過 5 萬）的視為假成交或亂掛價，不列入。</div></div>`;
   return cfg + (INV.view === 'plan' ? iPlanHtml() : iCraftHtml());
 }
@@ -3670,7 +3667,7 @@ function iCraftHtml() {
   const row = (x, i, b) => `<tr><td class="dim">${i + 1}</td>
     <td><span class="nm">${ic(x.id)}${esc(name(x.id))}</span>${cpBtn(x.id)} <span class="tag ${x.s.q === 'hq' ? 't-hq' : 'dim'}">${x.s.q.toUpperCase()}</span><div class="dim">${recipeTag(x.r)}</div></td>
     <td class="n">${x.n.toLocaleString()} 次<div class="dim">做出 ${(x.n * x.r.a).toLocaleString()} 個${!b && x.nS > x.n ? `（庫存夠做 ${x.nS} 次）` : ''}</div></td>
-    <td>${iNames(x.k.use)}${x.k.make.length ? `<div class="pos">先用庫存原料自己做：${iNames(x.k.make)}</div>` : ''}${x.k.get.length ? `<div class="dim">要買：${iNames(x.k.get)}</div>` : ''}</td>
+    <td>${iNames(x.k.use)}${x.k.get.length ? `<div class="dim">要買：${iNames(x.k.get)}</div>` : ''}</td>
     <td class="n">${fmt(x.inc)}<div class="dim">上架 ${fmt(x.s.list)}／個</div></td>
     <td class="n">${fmt(x.k.c - x.k.bc)}${b ? `<div class="dim">買材料 ${fmt(x.k.bc)}</div>` : x.k.bc ? `<div class="dim">買水晶 ${fmt(x.k.bc)}</div>` : ''}</td>
     <td class="n"><b class="pos">+${fmt(x.gain)}</b>${b ? `<div class="dim">庫存省 ${Math.round(x.cover * 100)}%</div>` : ''}</td>
@@ -3680,24 +3677,11 @@ function iCraftHtml() {
   return tbl(A, false, '只用庫存就能做', '材料全部來自庫存（水晶不夠的話用買的）。每一項是各自獨立計算，好幾項可能搶同一批材料；要一次排好請看「📋 最佳行動方案」。') +
     tbl(B, true, '補買一點材料再做', '庫存不夠做到銷量上限，缺的材料用買的。「庫存省 X%」＝庫存幫你省下的材料錢比例。');
 }
-// 把要買的材料放進購物清單：可製作的材料標成「直接買成品」，數量換算成製作次數（一次產多個的會無條件進位）
-let iShopLast = [];
-function invToList(rows, fresh) {
-  if (fresh) { const k = 'l' + Date.now(); B.lists[k] = { name: `庫存方案 ${new Date().toLocaleDateString('zh-TW')}`, items: [], done: {} }; B.cur = k; B.itemView = {}; loadBP(); }
-  rows.forEach(([id, q]) => {
-    const c = Math.ceil(q / yieldOf(id)), it = L().items.find(x => x.id === id);
-    if (it) it.crafts += c; else L().items.push({ id, crafts: c });
-    if (RECIPES[id]) { B.P.rootBuy = B.P.rootBuy || {}; B.P.rootBuy[id] = 1; }
-  });
-  saveBP(); saveLists(); renderListSel(); batchFetch(false);
-  return L().name;
-}
 function iPlanHtml() {
   const P = iPlan(), inc = P.crafts.reduce((t, p) => t + p.inc, 0), bc = P.crafts.reduce((t, p) => t + p.bc, 0), sv = P.sell.reduce((t, x) => t + x.v.total, 0), tot = inc - bc + sv;
   const box = (k, v, d) => `<div class="box"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${d}</div></div>`;
   const shop = Object.entries(P.shop).sort((a, b) => b[1][1] - a[1][1]);
   const shopTxt = shop.map(([g, e]) => `${name(+g)} ${e[0]}`).join('\n');
-  iShopLast = shop;
   return `<div class="grid" style="margin-bottom:16px">
       ${box('照這個方案預計拿到', fmt(tot), '成品收入 − 買材料 ＋ 剩下的直接賣（都已扣稅）')}
       ${box('比全部直接賣多', `<span class="${tot - P.base >= 0 ? 'pos' : 'neg'}">${tot - P.base >= 0 ? '+' : ''}${fmt(tot - P.base)}</span>`, `全部直接賣約 ${fmt(P.base)}`)}
@@ -3707,10 +3691,10 @@ function iPlanHtml() {
     <div class="card"><h2>🔨 1. 要做的東西（${P.crafts.length}）</h2>${P.crafts.length ? `<div style="overflow-x:auto"><table class="mt"><thead><tr><th>#</th><th>成品</th><th class="n">做幾次</th><th>用庫存</th><th>要買</th><th class="n">成品賣得（扣稅）</th><th class="n">多賺</th></tr></thead><tbody>
       ${P.crafts.map((p, i) => `<tr><td class="dim">${i + 1}</td><td><span class="nm">${ic(p.id)}${esc(name(p.id))}</span>${cpBtn(p.id)} <span class="tag ${p.s.q === 'hq' ? 't-hq' : 'dim'}">${p.s.q.toUpperCase()}</span><div class="dim">${recipeTag(p.r)}・上架 ${fmt(p.s.list)}／個</div></td>
         <td class="n">${p.n.toLocaleString()} 次<div class="dim">做出 ${(p.n * p.r.a).toLocaleString()} 個</div></td>
-        <td>${iNames(Object.entries(p.use).map(([g, q]) => [+g, q]))}${Object.keys(p.make).length ? `<div class="pos">先用庫存原料自己做：${iNames(Object.entries(p.make).map(([g, q]) => [+g, q]))}</div>` : ''}</td><td>${Object.keys(p.get).length ? iNames(Object.entries(p.get).map(([g, e]) => [+g, e[0]])) + `<div class="dim">約 ${fmt(p.bc)}</div>` : '<span class="dim">不用買</span>'}</td>
+        <td>${iNames(Object.entries(p.use).map(([g, q]) => [+g, q]))}</td><td>${Object.keys(p.get).length ? iNames(Object.entries(p.get).map(([g, e]) => [+g, e[0]])) + `<div class="dim">約 ${fmt(p.bc)}</div>` : '<span class="dim">不用買</span>'}</td>
         <td class="n">${fmt(p.inc)}</td><td class="n"><b class="pos">+${fmt(p.gain)}</b></td></tr>`).join('')}</tbody></table></div>` : '<div class="dim">沒有比直接賣更賺的做法，建議全部直接賣。</div>'}</div>
-    ${shop.length ? `<div class="card"><div class="row" style="justify-content:space-between"><h2>🛒 2. 要買的材料（${shop.length}）</h2><div class="row"><button class="mini2" data-invnew="1">🛒 全部建成新購物清單</button><button class="mini2" data-invcopy="${esc(shopTxt)}">📋 複製購物清單</button></div></div><div style="overflow-x:auto"><table class="lt"><thead><tr><th>材料</th><th class="n">數量</th><th class="n">約花費</th><th></th></tr></thead><tbody>
-      ${shop.map(([g, e]) => `<tr><td>${ic(+g)}${esc(name(+g))}${cpBtn(+g)}</td><td class="n">${e[0].toLocaleString()}</td><td class="n">${fmt(e[1])}</td><td><button class="mini2" data-invadd="${g}:${e[0]}" title="加入目前選的購物清單「${esc(L().name)}」">＋ 加入清單</button></td></tr>`).join('')}</tbody></table></div><div class="dim" style="margin-top:6px">「＋ 加入清單」會加到購物清單分頁目前選的清單（「${esc(L().name)}」）；「全部建成新購物清單」會另外建一份新清單。可以製作的材料會標成「直接買」，不會展開成它的材料。</div><div class="note">價格是用目前最低上架價估的；要買的量多時，後面幾筆會比較貴。</div></div>` : ''}
+    ${shop.length ? `<div class="card"><div class="row" style="justify-content:space-between"><h2>🛒 2. 要買的材料（${shop.length}）</h2><button class="mini2" data-invcopy="${esc(shopTxt)}">📋 複製購物清單</button></div><div style="overflow-x:auto"><table class="lt"><thead><tr><th>材料</th><th class="n">數量</th><th class="n">約花費</th></tr></thead><tbody>
+      ${shop.map(([g, e]) => `<tr><td>${ic(+g)}${esc(name(+g))}${cpBtn(+g)}</td><td class="n">${e[0].toLocaleString()}</td><td class="n">${fmt(e[1])}</td></tr>`).join('')}</tbody></table></div><div class="note">價格是用目前最低上架價估的；要買的量多時，後面幾筆會比較貴。</div></div>` : ''}
     <div class="card"><h2>💰 3. 剩下的直接賣（${P.sell.length}）</h2><div class="hint">扣掉要拿去做東西的部分後，剩下好賣的庫存，依總值排序。</div><div style="overflow-x:auto"><table class="lt"><thead><tr><th>道具</th><th class="n">數量</th><th class="n">建議上架價</th><th class="n">扣稅後總值</th><th class="n">約幾天賣完</th></tr></thead><tbody>
       ${P.sell.slice(0, INV.cshown).map(x => `<tr><td>${ic(x.id)}${esc(name(x.id))}${cpBtn(x.id)} ${x.hq ? '<span class="tag t-hq">HQ</span>' : ''}</td><td class="n">${x.qty.toLocaleString()}</td><td class="n">${fmt(x.v.list)}</td><td class="n">${fmt(x.v.total)}</td><td class="n">${x.v.days < 1 ? '1 天內' : Math.ceil(x.v.days) + ' 天'}</td></tr>`).join('')}</tbody></table></div>
       ${P.sell.length > INV.cshown ? `<div style="margin-top:10px;text-align:center"><button data-icmore="1">顯示更多（還有 ${P.sell.length - INV.cshown} 項）</button></div>` : ''}</div>
@@ -3750,8 +3734,6 @@ $('#tab-inv').addEventListener('click', async e => {
   if (t.dataset.iview) { INV.view = t.dataset.iview; INV.cshown = 30; saveINVC(); if (INV.view === 'sell') invRenderTable(); else invLoadCraft(); return; }
   if (t.dataset.icmore) { INV.cshown += 30; invRenderTable(); return; }
   if (t.dataset.invcopy != null) { toast((await copyText(t.dataset.invcopy)) ? '已複製購物清單' : '複製失敗'); return; }
-  if (t.dataset.invnew) { const nm = invToList(iShopLast.map(([g, e]) => [+g, e[0]]), true); toast(`已建立「${nm}」（${iShopLast.length} 種材料）`); t.textContent = '已建立 ✓'; return; }
-  if (t.dataset.invadd) { const [g, q] = t.dataset.invadd.split(':').map(Number); const nm = invToList([[g, q]]); toast(`已把 ${name(g)} ×${q} 加入「${nm}」`); t.textContent = '已加入 ✓'; t.disabled = true; return; }
   if (t.dataset.invdel) { delete INV.files[t.dataset.invdel]; saveINV(); invLoad(); }
   else if (t.dataset.invclear) { if (confirm('要清除所有匯入的庫存資料嗎？')) { INV.files = {}; saveINV(); invRender(); $('#invStatus').textContent = ''; } }
   else if (t.dataset.invmore) { INV.shown += 100; invRenderTable(); }
