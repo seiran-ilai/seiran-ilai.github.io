@@ -242,6 +242,17 @@ input[type=color]{width:34px;height:28px;padding:0 2px;border:1px solid var(--li
 .apc{gap:6px}
 .apc .chip{font-size:13px;padding:4px 10px}
 .apc .chip .nab{margin:0}
+/* 捲軸：深色細捲軸，配合深色主題 */
+:root{color-scheme:dark}
+*{scrollbar-width:thin;scrollbar-color:#4a4a58 transparent}
+*:hover{scrollbar-color:#6a6a78 transparent}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#3e3e4a;border-radius:99px}
+::-webkit-scrollbar-thumb:hover{background:#f2b43a}
+::-webkit-scrollbar-button{display:none;width:0;height:0}
+::-webkit-scrollbar-corner{background:transparent}
+.card .infobtn{display:none}
 .sitefoot{display:flex;justify-content:center;margin-top:18px}
 .mpick{display:none}
 .battle>*,.battlewrap>*{min-width:0}
@@ -249,13 +260,15 @@ input[type=color]{width:34px;height:28px;padding:0 2px;border:1px solid var(--li
 select{max-width:100%}
 @media (hover:none){ .kbhint{display:none} .cell .x,.cell .pl{display:block} }
 @media (max-width:760px){
-  .battle{grid-template-columns:1fr}
-  .vs{padding:2px}
+  .battle{grid-template-columns:1fr 1fr}
   #player{width:calc(100vw - 20px);right:10px;bottom:10px}
-  header{padding:10px 12px;gap:8px}
-  header h1{font-size:17px}
+  header{position:static;padding:8px 10px;gap:6px}
+  header h1{font-size:16px}
   header .credit{display:none}
-  .spsel{width:100%;justify-content:flex-end}
+  .spsel{width:auto;font-size:12px;gap:4px}
+  .spsel .sptxt{display:none}
+  .spsel select{font-size:12.5px;padding:3px 4px;max-width:44vw}
+  nav button{padding:5px 9px;font-size:14px}
   nav{flex-wrap:nowrap;overflow-x:auto;width:100%;scrollbar-width:none;-webkit-overflow-scrolling:touch}
   nav::-webkit-scrollbar{display:none}
   nav button{white-space:nowrap;flex:none}
@@ -265,13 +278,24 @@ select{max-width:100%}
   .modal{padding:16px 8px}
   /* 二選一 */
   .battlewrap{grid-template-columns:minmax(0,1fr)}
-  .battle{gap:10px}
-  .card{padding:10px;gap:8px;border-radius:14px}
-  .card .title{font-size:16px;min-height:0}
-  .card .use,.card .orch{font-size:12px;padding:5px 8px}
+  .battle{gap:8px}
+  .vs{display:none}
+  .card{padding:6px;gap:5px;border-radius:12px}
+  .card .embed{border-radius:8px}
+  .card .bcover .cov{width:44px;height:44px}
+  .card .bigplay2{height:44px;font-size:12px}
+  .card .title{font-size:13.5px;line-height:1.3;min-height:0;overflow-wrap:anywhere}
+  .card .title .orig{font-size:10.5px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .card .title .olab,.card .onote{display:none}
+  .kbhint,#hoverAutoWrap,#undoBtn,#skipBtn{display:none!important}
+  .card .infobtn{display:inline-block;align-self:flex-start;font-size:11.5px;padding:2px 8px;color:var(--muted)}
+  .card .cinfo{display:none}
+  .card.showinfo .cinfo{display:flex;flex-direction:column;gap:5px}
+  .card .use,.card .orch{font-size:11px;padding:4px 6px}
+  .card .small.muted{font-size:11px}
   .card button.pick{display:none}
-  .vs{font-size:20px;padding:0}
-  #rank-battle .row>h2{font-size:16px}
+  #rank-battle .row>h2{font-size:15px}
+  #rank-battle>.row:first-child .row button{padding:5px 8px;font-size:13px}
   body.inbattle .mpick{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:55;gap:8px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));background:rgba(13,13,16,.96);border-top:1px solid var(--line);backdrop-filter:blur(6px)}
   body.inbattle .mpick button{padding:12px 6px;font-size:15px}
   body.inbattle .mpick .primary{flex:1;font-weight:800}
@@ -320,7 +344,7 @@ select{max-width:100%}
     <button data-tab="buy">💿 支持原作</button>
   </nav>
   <label class="spsel" data-noi18n>🌐 <select id="langSel" aria-label="Language"></select></label>
-  <label class="spsel" title="比你進度新的版本內容（使用場景、樂譜入手方式）會先摺起來">🛡 防劇透・我玩到 <select id="spoilerSel"></select></label>
+  <label class="spsel" title="比你進度新的版本內容（使用場景、樂譜入手方式）會先摺起來">🛡 <span class="sptxt">防劇透・我玩到</span> <select id="spoilerSel"></select></label>
   <div class="credit" style="margin-left:auto">網頁製作：伊萊諾斯＠巴哈姆特・<a href="https://www.threads.com/@ilainosu.ffxiv" target="_blank" rel="noopener">Threads @ilainosu.ffxiv</a></div>
 </header>
 <main>
@@ -515,8 +539,8 @@ select{max-width:100%}
 </div>
 <div class="mpick" id="mpick">
   <button id="mpUndo" title="上一題">↶</button>
-  <button class="primary" id="mpA">▲ 選上面</button>
-  <button class="primary" id="mpB">▼ 選下面</button>
+  <button class="primary" id="mpA">◀ 選左邊</button>
+  <button class="primary" id="mpB">選右邊 ▶</button>
   <button id="mpSkip" title="跳過這題">⤼</button>
 </div>
 <div id="player" class="hidden">
@@ -1026,6 +1050,7 @@ function showRank(){
   renderCard($('#cardA'), TR[r.a], 'a', '←');
   renderCard($('#cardB'), TR[r.b], 'b', '→');
   renderLive(s, r);
+  ['#cardA','#cardB'].forEach(c=>$(c).classList.toggle('showinfo',mInfo));
   document.body.classList.add('inbattle');
   hoverWire();
 }
@@ -1088,9 +1113,9 @@ if(HOVER_OK){
 }
 // 二選一卡片：繁中官方名稱＋原聲帶原文（兩者相同或沒有繁中譯名時註明）
 function cardTitle(t){
-  if(t.zh) return `${esc(t.zh)}<span class="orig">原聲帶原文：${ttlHtml(t)}</span>`;
+  if(t.zh) return `${esc(t.zh)}<span class="orig"><span class="olab">原聲帶原文：</span>${ttlHtml(t)}</span>`;
   const note=t.custom||t.temp||LP?'':(TCO[t.id]&&TCO[t.id][0]&&TCO[t.id][3])?'繁中官方名稱與原聲帶原文相同':'繁中版沒有官方譯名，顯示原聲帶原文';
-  return ttlHtml(t)+(note?`<span class="orig">${note}</span>`:'');
+  return ttlHtml(t)+(note?`<span class="orig onote">${note}</span>`:'');
 }
 function renderCard(el,t,side,key){
   const media = (EMBED_OK&&t.vid)
@@ -1098,9 +1123,9 @@ function renderCard(el,t,side,key){
     : `<div class="bcover">${t.custom?'':coverImg(t.ak)}<button class="bigplay2" data-play="${esc(t.id)}">${t.vid?'▶ 用 YouTube 小視窗播放':'🔍 無線上音源，到 YouTube 搜尋'}</button></div>`;
   const rs=reasons[t.id]||'';
   el.innerHTML = `${media}
-  <div class="title">${cardTitle(t)}</div>${useHtml(t)}
+  <div class="title">${cardTitle(t)}</div><button type="button" class="ghost infobtn" data-info>ⓘ 詳細</button><div class="cinfo">${useHtml(t)}
   <div class="small muted">${exTag(t.ex)} ${catTag(t.cat)} ${esc(t.album)}${t.views?`　<span class="views">${esc(TF('YouTube 播放 {0}',fmtViews(t.views)))}</span>`:''}</div>
-  <div class="rsline">${rs?`💬 ${esc(rs)}`:''} <button class="ghost rsbtn" data-rs="${esc(t.id)}">✎ ${rs?'改':'寫'}喜歡的理由</button> ${favBtn(t)}</div>
+  <div class="rsline">${rs?`💬 ${esc(rs)}`:''} <button class="ghost rsbtn" data-rs="${esc(t.id)}">✎ ${rs?'改':'寫'}喜歡的理由</button> ${favBtn(t)}</div></div>
   <button class="primary pick" data-side="${side}">選這首 ${key}</button>`;
 }
 function choose(side){
@@ -1108,6 +1133,8 @@ function choose(side){
   const w = side==='a'?R.cur.a:R.cur.b;
   s.answers.push([R.cur.a,R.cur.b,w]); saveSessions(); showRank();
 }
+let mInfo=store.get('mInfo',false);
+document.addEventListener('click',e=>{ const b=e.target.closest('[data-info]'); if(!b) return; e.preventDefault(); mInfo=!mInfo; store.set('mInfo',mInfo); ['#cardA','#cardB'].forEach(c=>$(c).classList.toggle('showinfo',mInfo)); });
 $('#rank-battle').addEventListener('click',e=>{const b=e.target.closest('button.pick'); if(b) choose(b.dataset.side);});
 $('#skipBtn').onclick=skipQuestion;
 $('#mpA').onclick=()=>choose('a'); $('#mpB').onclick=()=>choose('b');
@@ -1145,9 +1172,7 @@ function showResult(s,order){
   $('#rank-result').classList.remove('hidden');
   $('#resultTitle').textContent = TF('{0} 結果',dispTitle(s));
   lastResult={title:s.title,order,ctx:s.ctx||null};
-  const rest = s.K? s.items.filter(id=>!order.includes(id)) : [];
-  $('#resultList').innerHTML = order.map((id,i)=>{const t=TR[id];return `<li><span class="rank ${i<3?'r'+(i+1):''}">${i+1}</span>${playBtn(t)}<div class="t" style="flex:1;min-width:0"><div>${tHtml(t)}</div><div class="small muted">${exTag(t.ex)} ${catTag(t.cat)} ${esc(t.album)}</div>${rsBits(t).line}</div>${favBtn(t)}${rsBits(t).btn}</li>`}).join('')
-    + (rest.length?`<li class="muted small" style="display:block">其餘 ${rest.length} 首未排名：${rest.map(id=>esc(TR[id].title)).join('、')}</li>`:'');
+  $('#resultList').innerHTML = order.map((id,i)=>{const t=TR[id];return `<li><span class="rank ${i<3?'r'+(i+1):''}">${i+1}</span>${playBtn(t)}<div class="t" style="flex:1;min-width:0"><div>${tHtml(t)}</div><div class="small muted">${exTag(t.ex)} ${catTag(t.cat)} ${esc(t.album)}</div>${rsBits(t).line}</div>${favBtn(t)}${rsBits(t).btn}</li>`}).join('');
   if(!s.done){ s.done=true; const h=store.get('hist',[]); h.unshift({title:s.title,date:new Date().toISOString(),order,cmp:s.answers.length,ctx:s.ctx||null}); store.set('hist',h.slice(0,50)); saveSessions(); }
 }
 $('#againBtn').onclick=()=>{R.sessions[R.mode]=null; saveSessions(); showRank();};
