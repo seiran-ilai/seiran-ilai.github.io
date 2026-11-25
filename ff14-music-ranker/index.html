@@ -236,6 +236,12 @@ input[type=color]{width:34px;height:28px;padding:0 2px;border:1px solid var(--li
 .spbanner{background:#1b2433;border:1px solid #2c3b55;color:#dbe8ff;border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:14px;line-height:1.55}
 .spbanner b{color:#8fc0ff}
 .startrow{background:rgba(242,180,58,.06);border:1px solid rgba(242,180,58,.25);border-radius:12px;padding:10px 12px}
+#albumPick{margin-top:8px;max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:4px 10px 10px}
+.apg{margin-top:8px}
+.apgh{display:flex;align-items:center;gap:8px;font-weight:800;color:var(--gold2);font-size:13.5px;margin-bottom:4px}
+.apc{gap:6px}
+.apc .chip{font-size:13px;padding:4px 10px}
+.apc .chip .nab{margin:0}
 .sitefoot{display:flex;justify-content:center;margin-top:18px}
 .mpick{display:none}
 .battle>*,.battlewrap>*{min-width:0}
@@ -331,11 +337,12 @@ select{max-width:100%}
         <div class="muted small">依 YouTube 官方音源（各原聲帶專輯）的觀看次數，取播放量最高的 100 首（2026 年 11 月統計，含版本原聲帶）。想快一點就選「只選前 3 名」，也可以先取消勾選不熟的曲子。<br>註：較新的資料片上架時間短、累積播放量較少，所以曲目會偏向舊資料片。</div>
       </div>
       <div id="setup-album">
-        <h2>① 選擇專輯，用二選一幫曲目排名</h2>
-        <div class="row">
-          <select id="albumSel" style="min-width:320px"></select>
-          <span class="muted small" id="albumInfo"></span>
+        <h2>① 選擇一張或多張專輯，用二選一幫曲目排名</h2>
+        <div class="row" style="justify-content:space-between">
+          <span class="muted small">可以複選，例如把管弦樂和鋼琴專輯放在一起排名。</span>
+          <span class="row"><span class="small" id="albumInfo"></span><button class="ghost" id="albumNone">全部取消</button></span>
         </div>
+        <div id="albumPick"></div>
       </div>
       <div id="setup-cat" class="hidden">
         <h2>② 依曲目性質排名</h2>
@@ -850,18 +857,27 @@ function setTab(t){
 // =================== RANKING ===================
 const R = {mode:'album', active:false, sessions:{album:null,cat:null,hot:null}, sel:{album:new Set(),cat:new Set(),hot:new Set()}};
 // setup: album
-const albumSel = $('#albumSel');
-(function(){
-  const groups = [['資料片原聲帶','ost'],PATCH_GROUP,...OTHER_GROUPS];
-  groups.forEach(([lab,ty])=>{
-    const og=document.createElement('optgroup');og.label=lab;
-    DATA.albums.forEach(a=>{ if(a.t===ty){const o=document.createElement('option');o.value=a.k;o.textContent=a.n+(a.na?'（無線上試聽）':'');og.appendChild(o);} });
-    albumSel.appendChild(og);
-  });
-  const og=document.createElement('optgroup');og.label='其他';const o=document.createElement('option');o.value='custom';o.textContent='自訂曲目';og.appendChild(o);albumSel.appendChild(og);
-})();
-albumSel.value = store.get('lastAlbum','arr');
-albumSel.onchange=()=>{store.set('lastAlbum',albumSel.value);resetPool();};
+const ALBUM_GROUPS=[['資料片原聲帶','ost'],PATCH_GROUP,...OTHER_GROUPS];
+const albumKeyOk=k=>k==='custom'||DATA.albums.some(a=>a.k===k);
+let albumPick=new Set((store.get('lastAlbums',null)||[store.get('lastAlbum','arr')]).filter(albumKeyOk));
+function saveAlbumPick(){ store.set('lastAlbums',[...albumPick]); }
+function renderAlbumPick(){
+  $('#albumPick').innerHTML=ALBUM_GROUPS.map(([lab,ty])=>{
+    const L=DATA.albums.filter(a=>a.t===ty); if(!L.length) return '';
+    const on=L.filter(a=>albumPick.has(a.k)).length;
+    return `<div class="apg"><div class="apgh"><span>${lab}</span><button class="ghost rsbtn" data-agrp="${ty}">${on===L.length?'取消整組':'整組全選'}</button></div>
+      <div class="row apc">${L.map(a=>`<span class="chip${albumPick.has(a.k)?' on':''}" data-alb="${a.k}" title="${esc(a.n)}">${coverImg(a.k,'style="width:20px;height:20px"')}<span>${esc(a.n)}</span>${a.na?'<span class="nab">需購買</span>':''}</span>`).join('')}</div></div>`;
+  }).join('')+(customs.length?`<div class="apg"><div class="row apc"><span class="chip${albumPick.has('custom')?' on':''}" data-alb="custom"><span>自訂曲目</span></span></div></div>`:'');
+}
+$('#albumPick').onclick=e=>{
+  const g=e.target.closest('[data-agrp]'), c=e.target.closest('[data-alb]');
+  if(g){ const L=DATA.albums.filter(a=>a.t===g.dataset.agrp); const all=L.every(a=>albumPick.has(a.k)); L.forEach(a=>all?albumPick.delete(a.k):albumPick.add(a.k)); }
+  else if(c){ const k=c.dataset.alb; albumPick.has(k)?albumPick.delete(k):albumPick.add(k); }
+  else return;
+  saveAlbumPick(); renderAlbumPick(); resetPool();
+};
+$('#albumNone').onclick=()=>{ albumPick.clear(); saveAlbumPick(); renderAlbumPick(); resetPool(); };
+renderAlbumPick();
 // setup: category
 const catState = store.get('catState',{ex:EXK.slice(),cat:'T'});
 $('#exChips').innerHTML = EXK.map(k=>`<span class="chip" data-ex="${k}">${coverImg(k,'style="width:22px;height:22px"')}${EX[k].n}</span>`).join('') + `<span class="chip" data-exall="1">全選</span>`;
@@ -883,7 +899,9 @@ syncCatChips();
 function poolCandidates(){
   if(R.mode==='hot') return HOT.map(id=>TR[id]).filter(Boolean);
   if(R.mode==='album'){
-    return albumTracks(albumSel.value);
+    const seen=new Set(), out=[];
+    albumPick.forEach(k=>albumTracks(k).forEach(t=>{ if(!seen.has(t.id)){ seen.add(t.id); out.push(t); } }));
+    return out;
   }
   const incP = $('#incPatch').checked;
   return allTracks().filter(t=>!t.arr && catState.ex.includes(t.ex) && t.cat===catState.cat && (incP||!t.patch));
@@ -904,8 +922,7 @@ function renderPool(){
   $('#estimate').textContent = n>=2?`預估約 ${estimateCmp(n,+$('#topK').value)} 題`:'至少要選 2 首';
   $('#startBtn').disabled = n<2;
   if(R.mode==='album'){
-    const a = DATA.albums.find(a=>a.k===albumSel.value);
-    $('#albumInfo').innerHTML = a?`${exTag(a.ex)} 共 ${c.length} 首`:`共 ${c.length} 首`;
+    $('#albumInfo').textContent = `已選 ${albumPick.size} 張專輯・共 ${c.length} 首`;
   }
 }
 $('#poolList').addEventListener('change',e=>{const id=e.target.dataset.id; if(!id) return; const s=R.sel[R.mode]; e.target.checked?s.add(id):s.delete(id); renderPool();});
@@ -965,7 +982,7 @@ function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.random()*(i+1)|0;
 
 function sessionTitle(mode){
   if(mode==='hot') return 'FF14 熱門 100 首';
-  if(mode==='album'){ const a=DATA.albums.find(a=>a.k===albumSel.value); return (a?a.n:'自訂曲目')+' 排名'; }
+  if(mode==='album') return ctxTitle({m:'album',a:[...albumPick]});
   const exs = catState.ex.length===EXK.length?'全資料片':catState.ex.map(k=>EX[k].n).join('＋');
   return `${exs}・${CAT[catState.cat]} 排名`;
 }
@@ -976,7 +993,7 @@ $('#startBtn').onclick=()=>{
   if(c.length<2) return;
   const K=+$('#topK').value; const KK=K&&K<c.length?K:0;
   const ctx = {m:R.mode, K:KK};
-  if(R.mode==='album') ctx.a=albumSel.value;
+  if(R.mode==='album') ctx.a=[...albumPick];
   if(R.mode==='cat'){ ctx.ex=catState.ex.slice(); ctx.c=catState.cat; }
   R.sessions[R.mode] = {title:sessionTitle(R.mode)+(KK?`（前 ${KK} 名）`:''), items:shuffle(c), answers:[], K:KK, est:estimateCmp(c.length,KK), done:false, ctx};
   saveSessions();
@@ -1349,14 +1366,17 @@ function rankPayload(d,name,withR){
 function compactRankUrl(d,name){
   const x=d.ctx; if(!x) return '';
   const ids=d.order.slice(0,LINK_MAX); if(!ids.every(isKnown)||ids.some(id=>/[~!&#]/.test(id))) return '';
-  const c=x.m==='hot'?'h'+(x.K||0):x.m==='album'?'a'+(x.K||0)+'.'+x.a:x.m==='cat'?'c'+(x.K||0)+'.'+(x.ex||[]).join(',')+'.'+x.c:'';
+  const c=x.m==='hot'?'h'+(x.K||0):x.m==='album'?'a'+(x.K||0)+'.'+[].concat(x.a||[]).join(','):x.m==='cat'?'c'+(x.K||0)+'.'+(x.ex||[]).join(',')+'.'+x.c:'';
   if(!c) return '';
   return baseUrl()+'#r='+c+'!'+ids.join('~')+(d.order.length>LINK_MAX?'!'+(d.order.length-LINK_MAX):'')+(name?'&n='+encodeURIComponent(name):'');
 }
 function ctxTitle(x){
   let t;
   if(x.m==='hot') t=T('FF14 熱門 100 首');
-  else if(x.m==='album'){ const a=DATA.albums.find(a=>a.k===x.a); t=TF('{0} 排名',T(a?a.n:'自訂曲目')); }
+  else if(x.m==='album'){
+    const ks=[].concat(x.a||[]), nm=k=>{ const a=DATA.albums.find(a=>a.k===k); return T(a?a.n:'自訂曲目'); };
+    t=ks.length<=3?TF('{0} 排名',ks.map(nm).join('＋')):TF('{0} 等 {1} 張專輯 排名',nm(ks[0]),ks.length);
+  }
   else { const ex=x.ex||[]; t=TF('{0}・{1} 排名',ex.length===EXK.length?T('全資料片'):ex.map(k=>EX[k]?T(EX[k].n):k).join('＋'),T(CAT[x.c]||'')); }
   return t+(x.K?TF('（前 {0} 名）',x.K):'');
 }
@@ -1366,7 +1386,7 @@ function parseCompact(h){
   const [c,ids,more]=decodeURIComponent(main).split('!'); const m={h:'hot',a:'album',c:'cat'}[c&&c[0]];
   if(!m||!ids) throw new Error('bad link');
   const p=c.slice(1).split('.'), x={m,K:+p[0]||0};
-  if(m==='album') x.a=p[1];
+  if(m==='album') x.a=(p[1]||'').split(',').filter(Boolean);
   if(m==='cat'){ x.ex=(p[1]||'').split(',').filter(Boolean); x.c=p[2]; }
   return {k:'r',t:ctxTitle(x),n:q.n||'',x,o:ids.split('~').filter(Boolean),m:+more||0};
 }
@@ -1549,7 +1569,7 @@ $('#viewBox').onclick=e=>{
     const s=R.sessions[m];
     if(s&&!s.done){ toast('你有一場還沒排完的，先帶你回去'); setTab(m); return; }
     R.sessions[m]=null; saveSessions();
-    if(x&&m==='album'&&[...albumSel.options].some(op=>op.value===x.a)){ albumSel.value=x.a; store.set('lastAlbum',x.a); }
+    if(x&&m==='album'){ const ks=[].concat(x.a||[]).filter(albumKeyOk); if(ks.length){ albumPick=new Set(ks); saveAlbumPick(); renderAlbumPick(); } }
     if(x&&m==='cat'&&Array.isArray(x.ex)){ catState.ex=x.ex.filter(k=>EXK.includes(k)); if(CATK.includes(x.c)) catState.cat=x.c; store.set('catState',catState); syncCatChips(); }
     if(x&&x.K&&[...$('#topK').options].some(op=>op.value===String(x.K))){ $('#topK').value=String(x.K); store.set('topK',String(x.K)); }
     R.sel[m]=new Set(); setTab(m); window.scrollTo(0,0);
