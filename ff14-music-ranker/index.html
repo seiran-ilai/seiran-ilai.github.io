@@ -219,6 +219,11 @@ input[type=color]{width:34px;height:28px;padding:0 2px;border:1px solid var(--li
 .visgrp>label{font-weight:800;color:var(--gold2)}
 .visitems{display:flex;flex-wrap:wrap;gap:4px 14px;margin:6px 0 0 22px;font-size:13.5px}
 .visitems label{display:inline-flex;gap:5px;align-items:center;cursor:pointer}
+.favadd{margin-top:12px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px}
+.rksel{width:auto;min-width:52px;font-weight:800;padding:3px 4px;text-align:center}
+.rksel.r1{color:#ffd24d;border-color:#ffd24d80}.rksel.r2{color:#d6dbe4;border-color:#d6dbe480}.rksel.r3{color:#e3a072;border-color:#e3a07280}
+.favdiv{padding:6px 10px;font-size:12px;color:var(--muted);background:#15151a;border-bottom:1px solid #22222a;text-align:center;letter-spacing:1px}
+.oshare{font-size:14px}
 .favbtn{padding:2px 8px;font-size:15px;color:var(--muted);line-height:1}
 .favbtn.on{color:#ff6b8a}
 .favplay{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -469,8 +474,21 @@ select{max-width:100%}
   <section id="tab-fav" class="hidden">
     <div class="panel">
       <h2>❤️ 喜好清單</h2>
-      <div class="muted small">在曲庫、二選一、排名結果按 ♡ 就會加進來；也可以從排名一次加入。整理好之後按「在 YouTube 播放」，會開一個 YouTube 暫時播放清單（可在 YouTube 按「儲存」存到你的帳號）。只有 YouTube 上有音源的曲目會放進播放清單。</div>
+      <div class="muted small">在曲庫、二選一、排名結果按 ♡，或在下方搜尋曲名，就會加進來；也可以從排名一次加入。左邊的數字可以直接改名次，前 10 名會放進分享圖；按 📣 可以單獨分享「這是我推的曲子！」。整理好之後按「在 YouTube 播放」，會開一個 YouTube 暫時播放清單（可在 YouTube 按「儲存」存到你的帳號）。只有 YouTube 上有音源的曲目會放進播放清單。</div>
+      <div class="favadd">
+        <div class="row">
+          <input type="search" id="favSearch" placeholder="搜尋曲名，手動加入喜好清單…" style="flex:1;min-width:180px">
+          <button id="favCustomBtn">＋ 自訂曲目</button>
+        </div>
+        <div class="row hidden" id="favCustomRow" style="margin-top:8px">
+          <input type="text" id="favCuTitle" placeholder="曲名" style="flex:1;min-width:140px">
+          <input type="text" id="favCuUrl" placeholder="YouTube 連結（選填）" style="flex:1.2;min-width:180px">
+          <button class="primary" id="favCuAdd">加入</button>
+        </div>
+        <div class="list hidden" id="favResults" style="max-height:280px"></div>
+      </div>
       <div class="row" style="margin-top:12px">
+        <button class="primary" id="favShare">📤 分享清單圖片</button>
         <button id="favFromRank">＋ 加入最近一次排名的前 10 名</button>
         <label class="row small muted" style="gap:4px"><input type="checkbox" id="favShuffle"> 隨機順序</label>
         <button class="ghost" id="favClear">清空</button>
@@ -530,6 +548,7 @@ select{max-width:100%}
     <div class="sharegrid">
       <button class="primary" id="shNative">📤 分享圖片到 App</button>
       <button id="shThreads">🧵 發到 Threads</button>
+      <button id="shX">𝕏 發到 X</button>
       <button id="shDl">⬇️ 下載圖片</button>
       <button id="shCopyLink">🔗 複製結果連結</button>
     </div>
@@ -848,14 +867,45 @@ function renderFav(){
   $('#favPlay').innerHTML=vids.length?`<div class="favplay">${chunks.map((c,i)=>`<a href="https://www.youtube.com/watch_videos?video_ids=${c.join(',')}" target="_blank" rel="noopener">▶ 在 YouTube 播放${chunks.length>1?` 第 ${i+1} 段（${i*50+1}–${i*50+c.length}）`:`全部（${c.length} 首）`}</a>`).join('')}
       ${L.length>vids.length?`<span class="small muted">另有 ${L.length-vids.length} 首 YouTube 上沒有音源，不會放進播放清單</span>`:''}</div>${chunks.length>1?'<div class="small muted" style="margin-top:6px">YouTube 一次最多 50 首，所以分成幾段。</div>':''}`
     :'<div class="muted small">清單是空的。到曲庫或排名結果按 ♡ 加入吧。</div>';
-  $('#favList').innerHTML=L.map((t,i)=>`<div class="item${t.vid?'':' novid'}"><span class="rank">${i+1}</span>${playBtn(t)}<div class="t"><div class="n">${tHtml(t)}</div><div class="s">${exTag(t.ex)} ${esc(t.album||'')}${t.vid?'':'・YouTube 上沒有音源'}</div></div>
-    <button class="ghost rsbtn" data-favmv="${i}" data-d="-1" title="上移" ${i?'':'disabled'}>↑</button><button class="ghost rsbtn" data-favmv="${i}" data-d="1" title="下移" ${i<L.length-1?'':'disabled'}>↓</button><button class="ghost rsbtn" data-favdel="${esc(t.id)}" title="移除">✕</button></div>`).join('');
+  const rkOpts=n=>Array.from({length:L.length},(_,j)=>`<option value="${j}"${j===n?' selected':''}>${j+1}</option>`).join('');
+  $('#favList').innerHTML=L.map((t,i)=>(i===10?`<div class="favdiv">以下不在前 10 名（分享圖只放前 10 名）</div>`:'')+`<div class="item${t.vid?'':' novid'}"><select class="rksel${i<3?' r'+(i+1):''}" data-rk="${i}" aria-label="名次">${rkOpts(i)}</select>${playBtn(t)}<div class="t"><div class="n">${tHtml(t)}</div><div class="s">${exTag(t.ex)} ${esc(t.album||'')}${t.vid?'':'・YouTube 上沒有音源'}</div></div>
+    <button class="ghost rsbtn oshare" data-oneshare="${esc(t.id)}" title="這是我推的曲子！分享這首">📣</button><button class="ghost rsbtn" data-favmv="${i}" data-d="-1" title="上移" ${i?'':'disabled'}>↑</button><button class="ghost rsbtn" data-favmv="${i}" data-d="1" title="下移" ${i<L.length-1?'':'disabled'}>↓</button><button class="ghost rsbtn" data-favdel="${esc(t.id)}" title="移除">✕</button></div>`).join('');
 }
+$('#favList').onchange=e=>{
+  const sel=e.target.closest('[data-rk]'); if(!sel) return;
+  const L=favs.filter(id=>TR[id]); const from=+sel.dataset.rk, to=+sel.value; if(from===to) return;
+  const [x]=L.splice(from,1); L.splice(to,0,x); favs=L; saveFavs(); renderFav(); toast(TF('已移到第 {0} 名',to+1));
+};
 $('#favList').onclick=e=>{
+  const o=e.target.closest('[data-oneshare]'); if(o){ shareOne(o.dataset.oneshare); return; }
   const m=e.target.closest('[data-favmv]'); if(m){ const L=favs.filter(id=>TR[id]); const i=+m.dataset.favmv, j=i+(+m.dataset.d); if(j<0||j>=L.length) return; [L[i],L[j]]=[L[j],L[i]]; favs=L; saveFavs(); renderFav(); return; }
   const d=e.target.closest('[data-favdel]'); if(d){ favs=favs.filter(x=>x!==d.dataset.favdel); saveFavs(); renderFav(); }
 };
 $('#favShuffle').onchange=renderFav;
+function renderFavResults(){
+  const q=$('#favSearch').value.trim().toLowerCase(), box=$('#favResults');
+  if(!q){ box.classList.add('hidden'); box.innerHTML=''; return; }
+  const L=allTracks().filter(t=>tMatch(t,q)||(t.album||'').toLowerCase().includes(q)).slice(0,40);
+  box.classList.remove('hidden');
+  box.innerHTML=L.length?L.map(t=>`<div class="item">${playBtn(t)}<div class="t"><div class="n">${tHtml(t)}</div><div class="s">${exTag(t.ex)} ${esc(t.album||'')}</div></div>${isFav(t.id)?'<button disabled>✓ 已加入</button>':`<button class="primary" data-favadd="${esc(t.id)}">＋ 加入</button>`}</div>`).join(''):'<div class="item muted">沒有符合的曲目</div>';
+}
+$('#favSearch').oninput=renderFavResults;
+$('#favResults').onclick=e=>{ const b=e.target.closest('[data-favadd]'); if(!b) return; addFavs([b.dataset.favadd]); renderFav(); renderFavResults(); toast('已加入喜好清單 ♥'); };
+$('#favCustomBtn').onclick=()=>{ $('#favCustomRow').classList.toggle('hidden'); if(!$('#favCustomRow').classList.contains('hidden')) $('#favCuTitle').focus(); };
+$('#favCuAdd').onclick=()=>{
+  const title=$('#favCuTitle').value.trim(); if(!title){ toast('請輸入曲名'); return; }
+  const raw=$('#favCuUrl').value.trim(), vid=parseYt(raw); if(raw&&!vid){ toast('看不懂這個 YouTube 連結'); return; }
+  const id='c_'+Date.now().toString(36);
+  customs.push({id,title,vid,ex:'c',cat:'O'}); store.set('custom',customs); buildTracks(); addPV();
+  addFavs([id]); $('#favCuTitle').value=''; $('#favCuUrl').value=''; renderFav(); toast('已加入喜好清單 ♥');
+};
+// 這是我推的曲子！：單曲分享
+function shareOne(id){ const t=TR[id]; if(!t) return; openShare('one',{title:'這是我推的曲子！',order:[id],ctx:{m:'one'}}); }
+// 分享清單圖片：前 10 名
+$('#favShare').onclick=()=>{
+  const order=favs.filter(id=>TR[id]); if(!order.length){ toast('清單是空的。到曲庫或排名結果按 ♡ 加入吧。'); return; }
+  openShare('rank',{title:'FF14 喜好清單',order,ctx:{m:'fav',K:Math.min(10,order.length)}});
+};
 $('#favFromRank').onclick=()=>{ const h=store.get('hist',[]); if(!h.length){ toast('還沒有完成的排名'); return; } const n=addFavs(h[0].order.slice(0,10)); toast(n?TF('從「{0}」加入了 {1} 首',dispTitle(h[0]),n):'這些曲目都已經在清單裡了'); renderFav(); };
 $('#favClear').onclick=()=>{ const b=$('#favClear'); if(b.dataset.arm){ favs=[]; saveFavs(); renderFav(); delete b.dataset.arm; b.textContent='清空'; } else { b.dataset.arm=1; b.textContent='再按一次確認清空'; setTimeout(()=>{delete b.dataset.arm;b.textContent='清空';},3000); } };
 function rsBits(t){ const r=reasons[t.id]; return {line: r?`<div class="rsv">💬 ${esc(r)}</div>`:'', btn:`<button class="ghost rsbtn" data-rs="${esc(t.id)}" title="喜歡的理由">✎</button>`}; }
@@ -1253,6 +1303,32 @@ const canvasBlob=cv=>new Promise((res,rej)=>{ try{ cv.toBlob(b=>b?res(b):rej(new
 function downloadBlob(blob,name){ const u=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u),4000); }
 
 // 排名分享卡：寬 1080，高 1080～（前 10 名約 1350，剛好是 Threads／IG 的 4:5）
+// 單曲分享卡：大縮圖＋曲名＋原文＋資料片／專輯＋理由
+async function drawOneCard(t,opt){
+  TH=opt.theme||shareTheme();
+  const W=1080, PAD=60, ex=EX[t.ex]||EX.c;
+  const im=await loadImg(t.vid?`https://i.ytimg.com/vi/${t.vid}/hqdefault.jpg`:coverUrl(t.ak));
+  const cv=document.createElement('canvas'); cv.width=W; cv.height=2000; const g=cv.getContext('2d');
+  let y=PAD+6;
+  g.textAlign='left'; g.fillStyle=TH.accent; g.font=`800 26px ${FONT}`; g.fillText(T('FINAL FANTASY XIV ♪ 音樂排名'),PAD,y+26); y+=56;
+  g.fillStyle=TH.text; g.font=`900 56px ${FONT}`; g.fillText(fitLine(g,opt.name?TF('{0} 推的曲子！',opt.name):T('這是我推的曲子！'),W-PAD*2),PAD,y+50); y+=84;
+  const iw=W-PAD*2, ih=Math.round(iw*9/16);
+  drawImgCover(g,im,PAD,y,iw,ih,18,ex.c); y+=ih+46;
+  g.fillStyle=TH.text; g.font=`900 48px ${FONT}`; y+=(wrapText(g,t.zh||t.title,PAD,y+10,iw,58,2,'left')-1)*58+10;
+  if(t.zh){ y+=44; g.fillStyle=TH.sub; g.font=`600 26px ${FONT}`; y+=(wrapText(g,t.title,PAD,y,iw,34,2,'left')-1)*34; }
+  y+=46; g.font=`800 26px ${FONT}`; g.fillStyle=exCol(ex.c); const exl=T(ex.n)+'　'; g.fillText(exl,PAD,y); const ew=g.measureText(exl).width;
+  g.fillStyle=TH.sub; g.font=`600 26px ${FONT}`; g.fillText(fitLine(g,T(t.album||''),iw-ew),PAD+ew,y);
+  const rs=opt.reasons&&reasons[t.id]?reasons[t.id]:'';
+  if(rs){ y+=58; g.fillStyle=TH.reason; g.font=`600 32px ${FONT}`; y+=(wrapText(g,'「'+rs+'」',PAD,y,iw,44,3,'left')-1)*44; }
+  y+=40;
+  const FOOT=108, H=Math.max(1080,y+FOOT);
+  const out=document.createElement('canvas'); out.width=W; out.height=H; const o=out.getContext('2d');
+  paintBg(o,W,H); o.drawImage(cv,0,0,W,y,0,0,W,y);
+  o.fillStyle=TH.line; o.fillRect(PAD,H-FOOT+10,W-PAD*2,1);
+  o.textAlign='left'; o.fillStyle=TH.hi; o.font=`800 24px ${FONT}`; o.fillText(T('你推哪一首？來排排看 →')+' '+SITE_HOST,PAD,H-FOOT+52);
+  o.fillStyle=TH.faint; o.font=`600 18px ${FONT}`; o.fillText(T('#FF14音樂排名　網頁製作：伊萊諾斯＠巴哈姆特・Threads @ilainosu.ffxiv'),PAD,H-FOOT+84);
+  return out;
+}
 async function drawRankCard(d,opt){
   TH=opt.theme||shareTheme();
   const W=1080, PAD=60, medal=TH.medal;
@@ -1398,13 +1474,15 @@ function rankPayload(d,name,withR){
 function compactRankUrl(d,name){
   const x=d.ctx; if(!x) return '';
   const ids=d.order.slice(0,LINK_MAX); if(!ids.every(isKnown)||ids.some(id=>/[~!&#]/.test(id))) return '';
-  const c=x.m==='hot'?'h'+(x.K||0):x.m==='album'?'a'+(x.K||0)+'.'+[].concat(x.a||[]).join(','):x.m==='cat'?'c'+(x.K||0)+'.'+(x.ex||[]).join(',')+'.'+x.c:'';
+  const c=x.m==='one'?'o0':x.m==='fav'?'f'+(x.K||0):x.m==='hot'?'h'+(x.K||0):x.m==='album'?'a'+(x.K||0)+'.'+[].concat(x.a||[]).join(','):x.m==='cat'?'c'+(x.K||0)+'.'+(x.ex||[]).join(',')+'.'+x.c:'';
   if(!c) return '';
   return baseUrl()+'#r='+c+'!'+ids.join('~')+(d.order.length>LINK_MAX?'!'+(d.order.length-LINK_MAX):'')+(name?'&n='+encodeURIComponent(name):'');
 }
 function ctxTitle(x){
   let t;
   if(x.m==='hot') t=T('FF14 熱門 100 首');
+  else if(x.m==='fav') t=T('FF14 喜好清單');
+  else if(x.m==='one') return T('這是我推的曲子！');
   else if(x.m==='album'){
     const ks=[].concat(x.a||[]), nm=k=>{ const a=DATA.albums.find(a=>a.k===k); return T(a?a.n:'自訂曲目'); };
     t=ks.length<=3?TF('{0} 排名',ks.map(nm).join('＋')):TF('{0} 等 {1} 張專輯 排名',nm(ks[0]),ks.length);
@@ -1415,7 +1493,7 @@ function ctxTitle(x){
 function parseCompact(h){
   const [main,...qs]=h.split('&'); const q={};
   qs.forEach(s=>{ const i=s.indexOf('='); if(i>0) q[s.slice(0,i)]=decodeURIComponent(s.slice(i+1)); });
-  const [c,ids,more]=decodeURIComponent(main).split('!'); const m={h:'hot',a:'album',c:'cat'}[c&&c[0]];
+  const [c,ids,more]=decodeURIComponent(main).split('!'); const m={h:'hot',a:'album',c:'cat',f:'fav',o:'one'}[c&&c[0]];
   if(!m||!ids) throw new Error('bad link');
   const p=c.slice(1).split('.'), x={m,K:+p[0]||0};
   if(m==='album') x.a=(p[1]||'').split(',').filter(Boolean);
@@ -1432,7 +1510,7 @@ function shareFiles(){ const n=SH.blobs.length; return SH.blobs.map((b,i)=>new F
 function downloadAll(){ const n=SH.blobs.length; SH.blobs.forEach((b,i)=>setTimeout(()=>downloadBlob(b,shareFileName(i,n)),i*450)); }
 function openShare(kind,d){
   SH.kind=kind; SH.d=d;
-  $('#shTitle').textContent='分享排名結果';
+  $('#shTitle').textContent=kind==='one'?'分享我推的曲子':d&&d.ctx&&d.ctx.m==='fav'?'分享喜好清單':'分享排名結果';
   $('#shName').value=store.get('shName','');
   $('#shReasons').checked=store.get('shReasons',true);
   $('#shLink').checked=store.get('shLink',false);
@@ -1442,7 +1520,7 @@ function openShare(kind,d){
   rebuildShare();
 }
 function closeShare(){ $('#shareModal').classList.add('hidden'); SH.seq++; }
-function setShareBusy(b){ ['#shNative','#shThreads','#shDl','#shCopyLink'].forEach(s=>$(s).disabled=b); }
+function setShareBusy(b){ ['#shNative','#shThreads','#shX','#shDl','#shCopyLink'].forEach(s=>$(s).disabled=b); }
 async function rebuildShare(){
   const my=++SH.seq, name=$('#shName').value.trim(), withR=$('#shReasons').checked;
   setShareBusy(true);
@@ -1450,10 +1528,10 @@ async function rebuildShare(){
   try{
     const payload=rankPayload(SH.d,name,withR);
     const url=baseUrl()+'#s='+await packObj(payload);
-    const cvs=[await drawRankCard(SH.d,{name,reasons:withR})];
+    const cvs=[SH.kind==='one'?await drawOneCard(TR[SH.d.order[0]],{name,reasons:withR}):await drawRankCard(SH.d,{name,reasons:withR})];
     const blobs=await Promise.all(cvs.map(canvasBlob));
     if(my!==SH.seq) return;
-    SH.url=url; SH.blobs=blobs; SH.compact=SH.kind==='rank'?compactRankUrl(SH.d,name):'';
+    SH.url=url; SH.blobs=blobs; SH.compact=compactRankUrl(SH.d,name);
     SH.objUrls.forEach(u=>URL.revokeObjectURL(u)); SH.objUrls=blobs.map(b=>URL.createObjectURL(b));
     $('#shPreview').innerHTML=SH.objUrls.length===1?`<img src="${SH.objUrls[0]}" alt="分享圖預覽">`
       :`<div class="pvs">${SH.objUrls.map((u,i)=>`<figure><img src="${u}" alt="分享圖 ${i+1}"><figcaption>${i+1} / ${SH.objUrls.length}</figcaption></figure>`).join('')}</div>`;
@@ -1477,6 +1555,16 @@ async function rebuildShare(){
 const cleanName=s=>String(s||'').replace(/[\s　]+/g,' ').trim();
 const prettyTitle=t=>cleanName(t).replace(/（前 (\d+) 名）/,' TOP $1');
 function buildShareText(name){
+  if(SH.kind==='one'){ // 單曲：曲名＋YouTube 連結（預覽卡會顯示這首歌）
+    const t=TR[SH.d.order[0]], rs=$('#shReasons').checked?reasons[t.id]||'':'';
+    const lines=[T('這是我推的曲子！'),'',`《${cleanName(t.zh||t.title)}》`];
+    if(t.zh) lines.push(cleanName(t.title));
+    if(rs) lines.push('',`「${rs}」`);
+    lines.push('',ytUrl(t));
+    if($('#shLink').checked) lines.push('',T('更多 FF14 音樂排名：'),SH.compact||SH.url);
+    lines.push('',SHARE_TAG);
+    return [...lines.join('\n')].slice(0,500).join('');
+  }
   const who=name?TF('{0} 的',name):T('我的');
   const head=`${who} ${prettyTitle(dispTitle(SH.d))}`, sep='\n';
   const blocks=SH.d.order.slice(0,10).map((id,i)=>{ const t=TR[id]; return `${i+1}. ${t?cleanName(t.zh||t.title):id}`; });
@@ -1517,6 +1605,12 @@ $('#shNative').onclick=()=>{
   const text=$('#shText').value;
   try{ navigator.clipboard&&navigator.clipboard.writeText(text).catch(()=>{}); }catch(e){}
   navigator.share({files:shareFiles(),text}).then(()=>toast('貼文文字也已複製')).catch(e=>{ if(e&&e.name!=='AbortError'){ toast('無法開啟分享，改為下載圖片'); downloadAll(); } });
+};
+$('#shX').onclick=()=>{
+  if(!SH.blobs.length) return;
+  downloadAll();
+  window.open('https://twitter.com/intent/tweet?text='+encodeURIComponent($('#shText').value),'_blank','noopener');
+  toast(SH.blobs.length>1?TF('已下載 {0} 張圖，記得一起拖進貼文',SH.blobs.length):T('圖片已下載，記得拖進貼文裡'));
 };
 $('#shThreads').onclick=()=>{
   if(!SH.blobs.length) return;
@@ -1585,10 +1679,10 @@ function renderView(){
   const who=o.n?esc(o.n):'有人';
   if(o.k==='r'){
     const items=(o.o||[]).map(decTrack);
-    box.innerHTML=`<div class="vhead"><div class="muted small">🎵 朋友分享的排名</div><h2>${esc(TF('{0} 的「{1}」',o.n||T('有人'),o.x?ctxTitle(o.x):T(o.t||'排名')))}</h2></div>
+    box.innerHTML=`<div class="vhead"><div class="muted small">🎵 朋友分享的排名</div><h2>${esc(o.x&&o.x.m==='one'?TF('{0} 推的曲子！',o.n||T('有人')):TF('{0} 的「{1}」',o.n||T('有人'),o.x?ctxTitle(o.x):T(o.t||'排名')))}</h2></div>
       <div class="result"><ol>${items.map((x,i)=>{ const t=TR[x.id]; if(!t) return ''; return `<li><span class="rank ${i<3?'r'+(i+1):''}">${i+1}</span>${playBtn(t)}<div class="t" style="flex:1;min-width:0"><div>${tHtml(t)}</div><div class="small muted">${exTag(t.ex)} ${t.cat&&CAT[t.cat]?catTag(t.cat):''} ${esc(t.album||'')}</div>${x.r?`<div class="rsv">💬 ${esc(x.r)}</div>`:''}</div></li>`; }).join('')}</ol></div>
       ${o.m?`<div class="muted small" style="margin-top:6px">…還有 ${o.m} 首沒放進連結</div>`:''}
-      <div class="row" style="margin-top:16px"><button class="primary" id="vTry">${o.x?'我也來排這個 ▶':'我也來排 ▶'}</button><button id="vHot">🔥 從熱門 100 首開始</button></div>`;
+      <div class="row" style="margin-top:16px"><button class="primary" id="vTry">${o.x&&(o.x.m==='fav'||o.x.m==='one')?'我也來做一份 ▶':o.x?'我也來排這個 ▶':'我也來排 ▶'}</button><button id="vHot">🔥 從熱門 100 首開始</button></div>`;
   } else {
     box.innerHTML=`<div class="vhead"><h2>喜好表功能已經移除</h2></div><div class="row" style="margin-top:12px"><button class="primary" id="vHot">🔥 從熱門 100 首開始</button></div>`;
   }
@@ -1596,6 +1690,7 @@ function renderView(){
 $('#viewBox').onclick=e=>{
   const b=e.target.closest('button'); if(!b||!VIEW) return;
   if(b.id==='vHot') setTab('hot');
+  if(b.id==='vTry'&&VIEW.x&&(VIEW.x.m==='fav'||VIEW.x.m==='one')){ setTab('fav'); window.scrollTo(0,0); return; }
   if(b.id==='vTry'){
     const x=VIEW.x, m=x&&['album','cat','hot'].includes(x.m)?x.m:'hot';
     const s=R.sessions[m];
