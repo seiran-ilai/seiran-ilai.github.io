@@ -253,6 +253,9 @@ input[type=color]{width:34px;height:28px;padding:0 2px;border:1px solid var(--li
 ::-webkit-scrollbar-button{display:none;width:0;height:0}
 ::-webkit-scrollbar-corner{background:transparent}
 .card .infobtn{display:none}
+.mthumb{background:#000 center/cover no-repeat;cursor:pointer;display:grid;place-items:center}
+.mthumb .mplay{width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,.65);border:2px solid #fff9;display:grid;place-items:center;font-size:18px;color:#fff}
+.mthumb.on .mplay{background:var(--gold);color:#000;border-color:var(--gold)}
 .sitefoot{display:flex;justify-content:center;margin-top:18px}
 .mpick{display:none}
 .battle>*,.battlewrap>*{min-width:0}
@@ -286,8 +289,9 @@ select{max-width:100%}
   .card .bigplay2{height:44px;font-size:12px}
   .card .title{font-size:13.5px;line-height:1.3;min-height:0;overflow-wrap:anywhere}
   .card .title .orig{font-size:10.5px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-  .card .title .olab,.card .onote{display:none}
+  .card .title .olab,.card .title .onote{display:none!important}
   .kbhint,#hoverAutoWrap,#undoBtn,#skipBtn{display:none!important}
+  .item .orchs{display:none}
   .card .infobtn{display:inline-block;align-self:flex-start;font-size:11.5px;padding:2px 8px;color:var(--muted)}
   .card .cinfo{display:none}
   .card.showinfo .cinfo{display:flex;flex-direction:column;gap:5px}
@@ -753,7 +757,7 @@ function refreshPlayButtons(){
     b.classList.toggle('on',on);
     if(b.classList.contains('play')&&!b.classList.contains('nov')) b.textContent = on?'■':'▶';
     if(b.classList.contains('bigplay')) b.textContent = on?'■ 停止':'▶ 試聽';
-    const sp=b.querySelector('.pbtn span'); if(sp) sp.textContent = on?'■':'▶';
+    const sp=b.querySelector('.pbtn span,.mplay'); if(sp) sp.textContent = on?'■':'▶';
   });
 }
 $('#plClose').onclick=stopPlay;
@@ -1050,7 +1054,7 @@ function showRank(){
   renderCard($('#cardA'), TR[r.a], 'a', '←');
   renderCard($('#cardB'), TR[r.b], 'b', '→');
   renderLive(s, r);
-  ['#cardA','#cardB'].forEach(c=>$(c).classList.toggle('showinfo',mInfo));
+  mInfo=false; ['#cardA','#cardB'].forEach(c=>$(c).classList.remove('showinfo'));
   document.body.classList.add('inbattle');
   hoverWire();
 }
@@ -1117,8 +1121,11 @@ function cardTitle(t){
   const note=t.custom||t.temp||LP?'':(TCO[t.id]&&TCO[t.id][0]&&TCO[t.id][3])?'繁中官方名稱與原聲帶原文相同':'繁中版沒有官方譯名，顯示原聲帶原文';
   return ttlHtml(t)+(note?`<span class="orig onote">${note}</span>`:'');
 }
+const isNarrow=()=>matchMedia('(max-width:760px)').matches;
 function renderCard(el,t,side,key){
-  const media = (EMBED_OK&&t.vid)
+  const media = (EMBED_OK&&t.vid&&isNarrow())
+    ? `<div class="embed mthumb" data-play="${esc(t.id)}" style="background-image:url('https://i.ytimg.com/vi/${t.vid}/mqdefault.jpg')"><span class="mplay">${playing===t.id?'■':'▶'}</span></div>`
+    : (EMBED_OK&&t.vid)
     ? `<div class="embed"><iframe src="https://www.youtube.com/embed/${t.vid}?rel=0&modestbranding=1&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`
     : `<div class="bcover">${t.custom?'':coverImg(t.ak)}<button class="bigplay2" data-play="${esc(t.id)}">${t.vid?'▶ 用 YouTube 小視窗播放':'🔍 無線上音源，到 YouTube 搜尋'}</button></div>`;
   const rs=reasons[t.id]||'';
@@ -1133,8 +1140,8 @@ function choose(side){
   const w = side==='a'?R.cur.a:R.cur.b;
   s.answers.push([R.cur.a,R.cur.b,w]); saveSessions(); showRank();
 }
-let mInfo=store.get('mInfo',false);
-document.addEventListener('click',e=>{ const b=e.target.closest('[data-info]'); if(!b) return; e.preventDefault(); mInfo=!mInfo; store.set('mInfo',mInfo); ['#cardA','#cardB'].forEach(c=>$(c).classList.toggle('showinfo',mInfo)); });
+let mInfo=false;
+document.addEventListener('click',e=>{ const b=e.target.closest('[data-info]'); if(!b) return; e.preventDefault(); mInfo=!mInfo; ['#cardA','#cardB'].forEach(c=>$(c).classList.toggle('showinfo',mInfo)); });
 $('#rank-battle').addEventListener('click',e=>{const b=e.target.closest('button.pick'); if(b) choose(b.dataset.side);});
 $('#skipBtn').onclick=skipQuestion;
 $('#mpA').onclick=()=>choose('a'); $('#mpB').onclick=()=>choose('b');
