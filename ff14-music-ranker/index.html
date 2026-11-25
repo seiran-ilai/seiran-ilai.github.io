@@ -224,6 +224,10 @@ input[type=color]{width:34px;height:28px;padding:0 2px;border:1px solid var(--li
 .rksel.r1{color:#ffd24d;border-color:#ffd24d80}.rksel.r2{color:#d6dbe4;border-color:#d6dbe480}.rksel.r3{color:#e3a072;border-color:#e3a07280}
 .favdiv{padding:6px 10px;font-size:12px;color:var(--muted);background:#15151a;border-bottom:1px solid #22222a;text-align:center;letter-spacing:1px}
 .oshare{font-size:14px}
+.dragh{cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;padding:4px 6px;color:var(--muted);font-size:18px;line-height:1;flex:none}
+.dragh:hover{color:var(--gold2)}
+.item.dragging{background:#2a2213;outline:1px solid var(--gold);box-shadow:0 6px 18px rgba(0,0,0,.5);position:relative;z-index:5}
+body.dragging-fav,body.dragging-fav *{cursor:grabbing!important;user-select:none}
 .favbtn{padding:2px 8px;font-size:15px;color:var(--muted);line-height:1}
 .favbtn.on{color:#ff6b8a}
 .favplay{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -868,9 +872,36 @@ function renderFav(){
       ${L.length>vids.length?`<span class="small muted">另有 ${L.length-vids.length} 首 YouTube 上沒有音源，不會放進播放清單</span>`:''}</div>${chunks.length>1?'<div class="small muted" style="margin-top:6px">YouTube 一次最多 50 首，所以分成幾段。</div>':''}`
     :'<div class="muted small">清單是空的。到曲庫或排名結果按 ♡ 加入吧。</div>';
   const rkOpts=n=>Array.from({length:L.length},(_,j)=>`<option value="${j}"${j===n?' selected':''}>${j+1}</option>`).join('');
-  $('#favList').innerHTML=L.map((t,i)=>(i===10?`<div class="favdiv">以下不在前 10 名（分享圖只放前 10 名）</div>`:'')+`<div class="item${t.vid?'':' novid'}"><select class="rksel${i<3?' r'+(i+1):''}" data-rk="${i}" aria-label="名次">${rkOpts(i)}</select>${playBtn(t)}<div class="t"><div class="n">${tHtml(t)}</div><div class="s">${exTag(t.ex)} ${esc(t.album||'')}${t.vid?'':'・YouTube 上沒有音源'}</div>${rsBits(t).line}</div>
+  $('#favList').innerHTML=L.map((t,i)=>(i===10?`<div class="favdiv">以下不在前 10 名（分享圖只放前 10 名）</div>`:'')+`<div class="item${t.vid?'':' novid'}" data-fid="${esc(t.id)}"><span class="dragh" title="拖曳排序" aria-label="拖曳排序">⠿</span><select class="rksel${i<3?' r'+(i+1):''}" data-rk="${i}" aria-label="名次">${rkOpts(i)}</select>${playBtn(t)}<div class="t"><div class="n">${tHtml(t)}</div><div class="s">${exTag(t.ex)} ${esc(t.album||'')}${t.vid?'':'・YouTube 上沒有音源'}</div>${rsBits(t).line}</div>
     ${rsBits(t).btn}<button class="ghost rsbtn oshare" data-oneshare="${esc(t.id)}" title="這是我推的曲子！分享這首">📣</button><button class="ghost rsbtn" data-favmv="${i}" data-d="-1" title="上移" ${i?'':'disabled'}>↑</button><button class="ghost rsbtn" data-favmv="${i}" data-d="1" title="下移" ${i<L.length-1?'':'disabled'}>↓</button><button class="ghost rsbtn" data-favdel="${esc(t.id)}" title="移除">✕</button></div>`).join('');
 }
+// 拖曳排序：按住 ⠿ 拖到想要的位置
+(function(){
+  const list=$('#favList'); let row=null, raf=0, lastY=0;
+  const rows=()=>[...list.querySelectorAll('.item[data-fid]')];
+  function place(y){
+    const others=rows().filter(r=>r!==row);
+    const next=others.find(r=>{ const b=r.getBoundingClientRect(); return y<b.top+b.height/2; });
+    if(next){ if(next.previousElementSibling!==row) list.insertBefore(row,next); }
+    else if(list.lastElementChild!==row) list.appendChild(row);
+  }
+  function autoScroll(){ if(!row) return; const m=70, h=innerHeight; if(lastY<m) scrollBy(0,-12); else if(lastY>h-m) scrollBy(0,12); place(lastY); raf=requestAnimationFrame(autoScroll); }
+  list.addEventListener('pointerdown',e=>{
+    const hd=e.target.closest('.dragh'); if(!hd) return;
+    e.preventDefault(); row=hd.closest('.item'); lastY=e.clientY;
+    list.querySelectorAll('.favdiv').forEach(d=>d.remove());
+    row.classList.add('dragging'); document.body.classList.add('dragging-fav');
+    raf=requestAnimationFrame(autoScroll);
+  });
+  document.addEventListener('pointermove',e=>{ if(!row) return; e.preventDefault(); lastY=e.clientY; place(lastY); });
+  const end=()=>{
+    if(!row) return; cancelAnimationFrame(raf);
+    row.classList.remove('dragging'); document.body.classList.remove('dragging-fav');
+    const order=rows().map(r=>r.dataset.fid), moved=order.join()!==favs.filter(id=>TR[id]).join();
+    row=null; favs=order; saveFavs(); renderFav(); if(moved) toast('已更新名次');
+  };
+  document.addEventListener('pointerup',end); document.addEventListener('pointercancel',end);
+})();
 $('#favList').onchange=e=>{
   const sel=e.target.closest('[data-rk]'); if(!sel) return;
   const L=favs.filter(id=>TR[id]); const from=+sel.dataset.rk, to=+sel.value; if(from===to) return;
