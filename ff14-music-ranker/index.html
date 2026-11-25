@@ -226,6 +226,8 @@ input[type=color]{width:34px;height:28px;padding:0 2px;border:1px solid var(--li
 .spoil.open .spc{display:inline}
 .spsel{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
 .spsel select{font-size:13px;padding:4px 6px}
+.spbanner{background:#1b2433;border:1px solid #2c3b55;color:#dbe8ff;border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:14px;line-height:1.55}
+.spbanner b{color:#8fc0ff}
 .sitefoot{display:flex;justify-content:center;margin-top:18px}
 .mpick{display:none}
 .battle>*,.battlewrap>*{min-width:0}
@@ -305,6 +307,10 @@ select{max-width:100%}
   <div class="credit" style="margin-left:auto">網頁製作：伊萊諾斯＠巴哈姆特・<a href="https://www.threads.com/@ilainosu.ffxiv" target="_blank" rel="noopener">Threads @ilainosu.ffxiv</a></div>
 </header>
 <main>
+  <div class="spbanner hidden" id="spBanner">
+    <div><b>🛡 先設定你的遊戲進度</b>：比你進度新的使用場景、樂譜入手方式、曲名後綴會自動摺起來，進度以內的直接顯示，不用一個一個點。之後也可以在頁首隨時更改。</div>
+    <div class="row" style="margin-top:8px"><span class="small">我玩到：</span><select id="spBannerSel"></select><button class="primary" id="spBannerOk">確定</button><button class="ghost" id="spBannerAll">我都玩完了，不用防劇透</button></div>
+  </div>
   <div class="banner hidden" id="fileBanner">⚠️ 你是直接打開 HTML 檔，YouTube 不允許這種情況在頁面內播放（會出現「錯誤 153」）。目前試聽會改用 <b>YouTube 小視窗</b>播放。<br>想要在頁面內直接播放：把這個檔案放到網路上再打開，例如拖曳到 <a href="https://app.netlify.com/drop" target="_blank" rel="noopener">Netlify Drop</a>（免費、免安裝），或放上 GitHub Pages。</div>
   <!-- ranking (shared by album & cat) -->
   <section id="tab-rank">
@@ -732,7 +738,13 @@ $('#plClose').onclick=stopPlay;
 (function(){
   const sel=$('#spoilerSel'); sel.innerHTML=SPOIL_OPTS.map(([v,l])=>`<option value="${v}">${l}</option>`).join('');
   const cur=String(store.get('spoilerUpTo','2.0')); sel.value=SPOIL_OPTS.some(o=>o[0]===cur)?cur:'2.0';
-  sel.onchange=()=>{ store.set('spoilerUpTo',sel.value); spoilerUpTo=parseFloat(sel.value); if(tab==='view') renderView(); else setTab(tab); toast(spoilerUpTo>=99?'已關閉防劇透':'已更新防劇透進度'); };
+  // 第一次進站（還沒設定過）顯示提示條
+  const bsel=$('#spBannerSel'); bsel.innerHTML=sel.innerHTML; bsel.value=sel.value;
+  if(store.get('spoilerUpTo',null)===null) $('#spBanner').classList.remove('hidden');
+  const applyBanner=v=>{ sel.value=v; $('#spBanner').classList.add('hidden'); sel.onchange(); };
+  $('#spBannerOk').onclick=()=>applyBanner(bsel.value);
+  $('#spBannerAll').onclick=()=>applyBanner('99');
+  sel.onchange=()=>{ $('#spBanner').classList.add('hidden'); store.set('spoilerUpTo',sel.value); spoilerUpTo=parseFloat(sel.value); if(tab==='view') renderView(); else setTab(tab); toast(spoilerUpTo>=99?'已關閉防劇透':'已更新防劇透進度'); };
 })();
 $('#plMin').onclick=()=>$('#player').classList.toggle('mini');
 document.addEventListener('click',e=>{
