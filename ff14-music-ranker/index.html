@@ -540,6 +540,7 @@ select{max-width:100%}
       <div class="row" style="margin-top:12px">
         <button class="primary" id="favFinal">⚔️ 最終決戰</button>
         <button class="primary" id="favShare">📤 分享清單圖片</button>
+        <button id="favShareAll" class="hidden"></button>
         <button id="favFromRank">＋ 加入最近一次排名的前 10 名</button>
         <label class="row small muted" style="gap:4px"><input type="checkbox" id="favShuffle"> 隨機順序</label>
         <button class="ghost" id="favClear">清空</button>
@@ -956,6 +957,7 @@ $('#tdModal').onclick=e=>{
 };
 function renderFav(){
   const L=favs.map(id=>TR[id]).filter(Boolean);
+  $('#favShareAll').classList.toggle('hidden',L.length<=10); $('#favShareAll').textContent=TF('🗂 分享完整清單（{0} 張圖）',rankPageCount(L.length));
   let vids=L.filter(t=>t.vid).map(t=>t.vid);
   if($('#favShuffle').checked) vids=shuffle(vids.slice());
   const chunks=[]; for(let i=0;i<vids.length;i+=50) chunks.push(vids.slice(i,i+50));
@@ -1090,10 +1092,12 @@ function startFinal(){
 }
 $('#favFinal').onclick=startFinal;
 // 分享清單圖片：前 10 名
-$('#favShare').onclick=()=>{
+function favShare(all){
   const order=favs.filter(id=>TR[id]); if(!order.length){ toast('清單是空的。到曲庫或排名結果按 ♡ 加入吧。'); return; }
-  openShare('rank',{title:'FF14 喜好清單',order,ctx:{m:'fav',K:Math.min(10,order.length)}});
-};
+  openShare('rank',{title:'FF14 喜好清單',order,ctx:{m:'fav',K:Math.min(10,order.length)}},all?{all:true}:null);
+}
+$('#favShare').onclick=()=>favShare(false);
+$('#favShareAll').onclick=()=>favShare(true);
 $('#favFromRank').onclick=()=>{ const h=store.get('hist',[]); if(!h.length){ toast('還沒有完成的排名'); return; } const n=addFavs(h[0].order.slice(0,10)); toast(n?TF('從「{0}」加入了 {1} 首',dispTitle(h[0]),n):'這些曲目都已經在清單裡了'); renderFav(); };
 $('#favClear').onclick=()=>{ const b=$('#favClear'); if(b.dataset.arm){ favs=[]; saveFavs(); renderFav(); delete b.dataset.arm; b.textContent='清空'; } else { b.dataset.arm=1; b.textContent='再按一次確認清空'; setTimeout(()=>{delete b.dataset.arm;b.textContent='清空';},3000); } };
 function rsBits(t){ const r=reasons[t.id]; return {line: r?`<div class="rsv">💬 ${esc(r)}</div>`:'', btn:`<button class="ghost rsbtn" data-rs="${esc(t.id)}" title="喜歡的理由">✎</button>`}; }
@@ -1213,8 +1217,9 @@ function estimateCmp(n,K){ // simulate with random answers
     tot+=c; }
   return estCache[key]=Math.round(tot/runs);
 }
-$('#topK').value=store.get('topK','10');
-$('#topK').onchange=()=>{store.set('topK',$('#topK').value);renderPool();};
+const topKOf=m=>store.get('topK_'+m,m==='hot'?'0':store.get('topK','10'));
+$('#topK').value=topKOf(R.mode);
+$('#topK').onchange=()=>{store.set('topK_'+R.mode,$('#topK').value);renderPool();};
 
 // ---- interactive merge sort with replay ----
 class Need{constructor(a,b){this.a=a;this.b=b}}
@@ -1283,7 +1288,7 @@ function showRank(){
   $('#rank-battle').classList.add('hidden');
   $('#rank-result').classList.add('hidden');
   R.active=!!s;
-  if(!s){ if(!R.sel[R.mode].size) resetPool(); else renderPool(); return; }
+  if(!s){ $('#topK').value=topKOf(R.mode); if(!R.sel[R.mode].size) resetPool(); else renderPool(); return; }
   s.items = s.items.filter(id=>TR[id]);
   const r = runSort(s.items, memoOf(s), s.K||0, recentOf(s), new Set(s.skip||[]));
   if(r.done){ showResult(s, r.order); return; }
@@ -1775,12 +1780,14 @@ function shareFileName(i,n){ const nm=$('#shName').value.trim()||T('我'); const
 function shareFiles(){ const n=SH.blobs.length; return SH.blobs.map((b,i)=>new File([b],shareFileName(i,n),{type:'image/png'})); }
 function downloadAll(){ const n=SH.blobs.length; SH.blobs.forEach((b,i)=>setTimeout(()=>downloadBlob(b,shareFileName(i,n)),i*450)); }
 const RANK_PER_PAGE=20;
+function favScopeK(){ const x=SH.d&&SH.d.ctx; if(x&&x.m==='fav'){ x.K=SH.all?0:Math.min(10,SH.d.order.length); if(!$('#shTitleIn').value||$('#shTitleIn').value===SH.titleDefault){ SH.titleDefault=x.t||dispTitle(SH.d); $('#shTitleIn').value=SH.titleDefault; } } }
 const rankPageCount=n=>n<=10?1:1+Math.ceil((n-10)/RANK_PER_PAGE);
 function openShare(kind,d,o){
   SH.kind=kind; SH.d=d;
   const n=d&&d.order?d.order.length:0, canAll=kind==='rank'&&n>10;
   SH.all=canAll&&(o&&o.all!=null?!!o.all:store.get('shAll',false));
   $('#shScopeWrap').classList.toggle('hidden',!canAll);
+  favScopeK();
   if(canAll){ $('#shAllLab').textContent=TF('全部 {0} 首（分成 {1} 張圖）',n,rankPageCount(n)); document.querySelectorAll('[name=shScope]').forEach(r=>r.checked=(r.value==='all')===SH.all); }
   $('#shTitle').textContent=kind==='one'?'分享我推的曲子':d&&d.ctx&&d.ctx.m==='fav'?'分享喜好清單':'分享排名結果';
   $('#shName').value=store.get('shName','');
@@ -1858,7 +1865,7 @@ function updShareCount(){ const n=charLen($('#shText').value); $('#shCount').tex
 let shTimer=null;
 $('#shName').oninput=()=>{ const v=$('#shName').value.trim(); store.set('shName',v); clearTimeout(shTimer); shTimer=setTimeout(rebuildShare,450); };
 $('#shTitleIn').oninput=()=>{ const v=$('#shTitleIn').value.trim(); if(v&&v!==SH.titleDefault) SH.d.ctx.t=v; else delete SH.d.ctx.t; clearTimeout(shTimer); shTimer=setTimeout(rebuildShare,450); };
-document.querySelectorAll('[name=shScope]').forEach(r=>r.onchange=()=>{ SH.all=r.value==='all'&&r.checked; store.set('shAll',SH.all); rebuildShare(); });
+document.querySelectorAll('[name=shScope]').forEach(r=>r.onchange=()=>{ SH.all=r.value==='all'&&r.checked; store.set('shAll',SH.all); favScopeK(); rebuildShare(); });
 $('#shReasons').onchange=()=>{ store.set('shReasons',$('#shReasons').checked); rebuildShare(); };
 $('#shLink').onchange=()=>{ store.set('shLink',$('#shLink').checked); rebuildShare(); };
 $('#shText').oninput=updShareCount;
@@ -1977,7 +1984,7 @@ $('#viewBox').onclick=e=>{
     R.sessions[m]=null; saveSessions();
     if(x&&m==='album'){ const ks=[].concat(x.a||[]).filter(albumKeyOk); if(ks.length){ albumPick=new Set(ks); saveAlbumPick(); renderAlbumPick(); } }
     if(x&&m==='cat'&&Array.isArray(x.ex)){ catState.ex=x.ex.filter(k=>EXK.includes(k)); if(CATK.includes(x.c)) catState.cat=x.c; store.set('catState',catState); syncCatChips(); }
-    if(x&&x.K&&[...$('#topK').options].some(op=>op.value===String(x.K))){ $('#topK').value=String(x.K); store.set('topK',String(x.K)); }
+    if(x&&x.K&&[...$('#topK').options].some(op=>op.value===String(x.K))){ $('#topK').value=String(x.K); store.set('topK_'+m,String(x.K)); }
     R.sel[m]=new Set(); setTab(m); window.scrollTo(0,0);
   }
 };
