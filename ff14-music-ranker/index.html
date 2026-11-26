@@ -230,6 +230,26 @@ input[type=color]{width:34px;height:28px;padding:0 2px;border:1px solid var(--li
 body.dragging-fav,body.dragging-fav *{cursor:grabbing!important;user-select:none}
 #favFinal{background:linear-gradient(90deg,#c0392b,#e67e22);border-color:#c0392b;color:#fff}
 #favFinal:hover{filter:brightness(1.1)}
+.stgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:10px}
+.stcard{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px}
+.stcard .v{font-size:26px;font-weight:900;color:var(--gold2);line-height:1.15}
+.stcard .l{font-size:12.5px;color:var(--muted);margin-top:2px}
+.stbig{grid-column:1/-1;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.stbig .v{font-size:40px}
+.bar{height:10px;background:#26262e;border-radius:99px;overflow:hidden;flex:1;min-width:120px}
+.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--gold),#ff8a3d);border-radius:99px}
+.strow{display:grid;grid-template-columns:minmax(90px,150px) 1fr auto;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid #22222a;font-size:13.5px}
+.strow .n{font-size:12px;color:var(--muted);white-space:nowrap}
+.stalb{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin-top:10px}
+.stalb .a{display:flex;gap:10px;align-items:center;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:8px}
+.stalb .a .cov{width:64px;height:64px;border-radius:8px;cursor:pointer;position:relative;flex:none}
+.stalb .a .cov:hover{outline:2px solid var(--gold)}
+.stalb .a .go{position:absolute;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.35);color:#fff;font-size:18px;opacity:0;transition:.12s}
+.stalb .a .cov:hover .go{opacity:1}
+.stalb .a .rk{font-weight:900;color:var(--muted);width:26px;text-align:right;flex:none}
+.stalb .a .nm{font-weight:800;font-size:13px;line-height:1.3}
+.stalb .a .meta{font-size:11.5px;color:var(--muted);margin-top:3px}
+@media (hover:none){ .stalb .a .go{opacity:1;background:rgba(0,0,0,.25)} }
 .favbtn{padding:2px 8px;font-size:15px;color:var(--muted);line-height:1}
 .favbtn.on{color:#ff6b8a}
 .favplay{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -355,6 +375,7 @@ select{max-width:100%}
     <button data-tab="cat">② 分類排名</button>
     <button data-tab="fav">❤️ 喜好清單</button>
     <button data-tab="lib">曲庫／自訂曲目</button>
+    <button data-tab="stats">📊 統計</button>
     <button data-tab="hist">排名紀錄</button>
     <button data-tab="buy">💿 支持原作</button>
   </nav>
@@ -504,6 +525,11 @@ select{max-width:100%}
       <div id="favPlay" style="margin-top:12px"></div>
       <div class="list" id="favList" style="max-height:none"></div>
     </div>
+  </section>
+
+  <!-- stats -->
+  <section id="tab-stats" class="hidden">
+    <div class="panel" id="statsBox"></div>
   </section>
 
   <!-- buy -->
@@ -937,6 +963,59 @@ $('#favCuAdd').onclick=()=>{
 };
 // 這是我推的曲子！：單曲分享
 function shareOne(id){ const t=TR[id]; if(!t) return; openShare('one',{title:'這是我推的曲子！',order:[id],ctx:{m:'one'}}); }
+// =================== STATS ===================
+function startAlbumFromStats(k){
+  const s=R.sessions.album; if(s&&!s.done){ toast(T('你有一場還沒排完的，先帶你回去')); setTab('album'); return; }
+  R.sessions.album=null; saveSessions();
+  albumPick=new Set([k]); saveAlbumPick(); renderAlbumPick(); R.sel.album=new Set();
+  setTab('album'); resetPool(); $('#startBtn').click(); window.scrollTo(0,0);
+}
+function startUnseen(){
+  if(!ST) ST=stBackfill();
+  const pool=allTracks().filter(t=>!t.custom&&!ST.seen[t.id]); if(pool.length<2){ toast(T('所有曲目都比過了！')); return; }
+  const items=shuffle(pool.map(t=>t.id)).slice(0,20);
+  R.sessions.pool={title:'還沒比過的曲目',items,answers:[],K:0,est:estimateCmp(items.length,0),done:false,ctx:{m:'pool',K:0,t:T('還沒比過的曲目')}};
+  saveSessions(); setTab('pool'); window.scrollTo(0,0);
+}
+function renderStats(){
+  if(!ST){ ST=stBackfill(); store.set('stats',ST); }
+  const all=allTracks().filter(t=>!t.custom), seen=all.filter(t=>ST.seen[t.id]), unseen=all.length-seen.length;
+  const totalWins=Object.values(ST.wins).reduce((a,b)=>a+b,0)||1;
+  const pct=n=>Math.round(n*100)+'%';
+  const agg=keyFn=>{ const m=new Map(); all.forEach(t=>{ const k=keyFn(t); if(!k) return; const o=m.get(k)||{k,app:0,win:0,n:0,seen:0}; o.n++; o.app+=ST.seen[t.id]||0; o.win+=ST.wins[t.id]||0; if(ST.seen[t.id]) o.seen++; m.set(k,o); }); return [...m.values()]; };
+  const barRows=(list,label)=>list.filter(o=>o.app>0).sort((a,b)=>b.win/b.app-a.win/a.app).map(o=>`<div class="strow"><span>${label(o)}</span><div class="bar" title="${pct(o.win/o.app)}"><i style="width:${Math.round(o.win/o.app*100)}%"></i></div><span class="n">${pct(o.win/o.app)}・${pct(o.win/totalWins)}</span></div>`).join('')||`<div class="muted small">${'還沒有資料，先去排一輪吧。'}</div>`;
+  const exRows=barRows(agg(t=>EXK.includes(t.ex)?t.ex:''),o=>`<b style="color:${EX[o.k].c}">${EX[o.k].n}</b>`);
+  const catRows=barRows(agg(t=>CATK.includes(t.cat)?t.cat:''),o=>catTag(o.k));
+  // 專輯：依勝率排名（沒比過的放最後），點封面開始
+  const albs=DATA.albums.filter(a=>!a.na||albumTracks(a.k).some(t=>t.vid)).map(a=>{ const L=albumTracks(a.k); const app=L.reduce((x,t)=>x+(ST.seen[t.id]||0),0), win=L.reduce((x,t)=>x+(ST.wins[t.id]||0),0), sn=L.filter(t=>ST.seen[t.id]).length; return {a,n:L.length,app,win,sn,rate:app?win/app:-1}; }).filter(o=>o.n>0);
+  albs.sort((x,y)=>y.rate-x.rate||y.sn-x.sn);
+  let rk=0;
+  const albHtml=albs.map(o=>{ const r=o.rate>=0?++rk:''; return `<div class="a"><span class="rk">${r}</span><span class="cov" data-stalb="${o.a.k}" title="${esc(o.a.n)}">${coverImg(o.a.k).replace(/^<span class="cov"[^>]*>|<\/span>$/g,'')}<span class="go">▶</span></span><div style="flex:1;min-width:0"><div class="nm">${esc(o.a.n)}</div><div class="bar" style="margin-top:6px"><i style="width:${Math.round(o.sn/o.n*100)}%"></i></div><div class="meta">${o.sn} / ${o.n} 首・${o.rate>=0?pct(o.rate):'—'}</div></div></div>`; }).join('');
+  const top=Object.entries(ST.wins).filter(([id])=>TR[id]).sort((a,b)=>b[1]-a[1]||(ST.seen[a[0]]||0)-(ST.seen[b[0]]||0)).slice(0,10);
+  const topHtml=top.length?`<ol class="result" style="padding:0;margin:8px 0 0">${top.map(([id,w],i)=>{ const t=TR[id], app=ST.seen[id]||w; return `<li><span class="rank ${i<3?'r'+(i+1):''}">${i+1}</span>${playBtn(t)}<div class="t" style="flex:1;min-width:0"><div>${tHtml(t)}</div><div class="small muted">${exTag(t.ex)} ${esc(t.album||'')}</div></div><span class="small muted" style="white-space:nowrap">${w} 勝・${pct(w/app)}</span>${favBtn(t)}</li>`; }).join('')}</ol>`:'<div class="muted small">還沒有資料，先去排一輪吧。</div>';
+  const hist=store.get('hist',[]), nReasons=Object.keys(reasons).length;
+  $('#statsBox').innerHTML=`<h2>📊 統計</h2><div class="muted small">只記錄在這台裝置的瀏覽器裡。勝率＝該曲出場時被選中的比例；占比＝佔全部勝場的比例。</div>
+    <div class="stgrid">
+      <div class="stcard stbig"><div><div class="v">${pct(seen.length/all.length)}</div><div class="l">整體完成度</div></div><div class="bar" style="height:14px"><i style="width:${(seen.length/all.length*100).toFixed(1)}%"></i></div><div class="small muted">已比過 ${seen.length} / ${all.length} 首</div></div>
+      <div class="stcard"><div class="v">${ST.ans}</div><div class="l">累計作答題數</div></div>
+      <div class="stcard"><div class="v">${hist.length}</div><div class="l">完成的排名</div></div>
+      <div class="stcard"><div class="v">${seen.length}</div><div class="l">比過的曲目</div></div>
+      <div class="stcard"><div class="v">${unseen}</div><div class="l">還沒比過的曲目</div></div>
+      <div class="stcard"><div class="v">${favs.length}</div><div class="l">喜好清單</div></div>
+      <div class="stcard"><div class="v">${nReasons}</div><div class="l">寫了喜歡的理由</div></div>
+    </div>
+    <div class="row" style="margin-top:12px"><button class="primary" id="stUnseen">🎲 從還沒比過的曲目抽 20 首開始</button></div>
+    <h3>資料片偏好（勝率・占比）</h3>${exRows}
+    <h3>類型偏好（勝率・占比）</h3>${catRows}
+    <h3>各專輯偏好排名・完成度 <span class="muted small">點封面直接開始比較</span></h3><div class="stalb">${albHtml}</div>
+    <h3>最常勝出的曲目</h3>${topHtml}
+    <div class="row" style="margin-top:18px;justify-content:flex-end"><button class="ghost" id="stReset">重設統計</button></div>`;
+}
+$('#statsBox').onclick=e=>{
+  const c=e.target.closest('[data-stalb]'); if(c){ startAlbumFromStats(c.dataset.stalb); return; }
+  if(e.target.closest('#stUnseen')){ startUnseen(); return; }
+  const r=e.target.closest('#stReset'); if(r){ if(r.dataset.arm){ ST={v:1,seen:{},wins:{},ans:0}; store.set('stats',ST); renderStats(); toast(T('已重設統計')); } else { r.dataset.arm=1; r.textContent=T('再按一次確認重設'); setTimeout(()=>{ if(r.isConnected){ delete r.dataset.arm; r.textContent=T('重設統計'); } },3000); } }
+};
 // ⚔️ 最終決戰：清單裡所有曲子完整排名一次
 function startFinal(){
   const items=favs.filter(id=>TR[id]);
@@ -962,7 +1041,9 @@ document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>setTab(b.datas
 function setTab(t){
   tab=t;
   document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
-  $('#tab-rank').classList.toggle('hidden',!(t==='album'||t==='cat'||t==='hot'||t==='final'));
+  $('#tab-rank').classList.toggle('hidden',!(t==='album'||t==='cat'||t==='hot'||t==='final'||t==='pool'));
+  $('#tab-stats').classList.toggle('hidden',t!=='stats');
+  if(t==='stats') renderStats();
   $('#tab-lib').classList.toggle('hidden',t!=='lib');
   $('#tab-hist').classList.toggle('hidden',t!=='hist');
   $('#tab-view').classList.toggle('hidden',t!=='view');
@@ -971,7 +1052,7 @@ function setTab(t){
   if(t==='fav') renderFav();
   if(t==='buy') renderBuy();
   document.body.classList.remove('inbattle');
-  if(t==='album'||t==='cat'||t==='hot'||t==='final'){ R.mode=t; showRank(); }
+  if(t==='album'||t==='cat'||t==='hot'||t==='final'||t==='pool'){ R.mode=t; showRank(); }
   if(t==='lib') renderLib();
   if(t==='hist') renderHist();
   if(t==='view'){ renderView(); window.scrollTo(0,0); return; }
@@ -979,7 +1060,7 @@ function setTab(t){
 }
 
 // =================== RANKING ===================
-const R = {mode:'album', active:false, sessions:{album:null,cat:null,hot:null,final:null}, sel:{album:new Set(),cat:new Set(),hot:new Set(),final:new Set()}};
+const R = {mode:'album', active:false, sessions:{album:null,cat:null,hot:null,final:null,pool:null}, sel:{album:new Set(),cat:new Set(),hot:new Set(),final:new Set(),pool:new Set()}};
 // setup: album
 const ALBUM_GROUPS=[['資料片原聲帶','ost'],PATCH_GROUP,...OTHER_GROUPS];
 const albumKeyOk=k=>k==='custom'||DATA.albums.some(a=>a.k===k);
@@ -1125,7 +1206,7 @@ $('#startBtn').onclick=()=>{
   showRank();
 };
 function saveSessions(){store.set('sessions',R.sessions)}
-(function(){const s=store.get('sessions',null); if(s){R.sessions.album=s.album||null;R.sessions.cat=s.cat||null;R.sessions.hot=s.hot||null;R.sessions.final=s.final||null;}})();
+(function(){const s=store.get('sessions',null); if(s){R.sessions.album=s.album||null;R.sessions.cat=s.cat||null;R.sessions.hot=s.hot||null;R.sessions.final=s.final||null;R.sessions.pool=s.pool||null;}})();
 function memoOf(s){const m=new Map(); s.answers.forEach(([a,b,w])=>m.set(a+'|'+b,w)); return m;}
 function showRank(){
   document.body.classList.remove('inbattle');
@@ -1133,7 +1214,8 @@ function showRank(){
   $('#setup-hot').classList.toggle('hidden',R.mode!=='hot');
   $('#setup-cat').classList.toggle('hidden',R.mode!=='cat');
   const s = R.sessions[R.mode];
-  if(R.mode==='final'&&!s){ setTab('fav'); return; } // 最終決戰沒有設定畫面，從喜好清單開始
+  if(R.mode==='final'&&!s){ setTab('fav'); return; }
+  if(R.mode==='pool'&&!s){ setTab('stats'); return; } // 最終決戰沒有設定畫面，從喜好清單開始
   $('#rank-setup').classList.toggle('hidden',!!s);
   $('#rank-battle').classList.add('hidden');
   $('#rank-result').classList.add('hidden');
@@ -1233,10 +1315,21 @@ function renderCard(el,t,side,key){
   <div class="rsline">${rs?`💬 ${esc(rs)}`:''} <button class="ghost rsbtn" data-rs="${esc(t.id)}">✎ ${rs?'改':'寫'}喜歡的理由</button> ${favBtn(t)}</div></div>
   <button class="primary pick" data-side="${side}">選這首 ${key}</button>`;
 }
+// ---- 累計統計：seen[id]=出現次數、wins[id]=勝場、ans=累計作答題數 ----
+let ST=store.get('stats',null);
+function stBackfill(){ // 第一次：從排名紀錄與進行中的作答回填
+  const st={v:1,seen:{},wins:{},ans:0}; const hist=store.get('hist',[]);
+  hist.forEach(r=>{ st.ans+=r.cmp||0; });
+  Object.values(R.sessions).forEach(x=>{ if(!x) return; x.answers.forEach(([a,b,w])=>{ st.seen[a]=(st.seen[a]||0)+1; st.seen[b]=(st.seen[b]||0)+1; st.wins[w]=(st.wins[w]||0)+1; }); if(!x.done) st.ans+=x.answers.length; });
+  hist.forEach(r=>r.order.forEach(id=>{ if(!st.seen[id]) st.seen[id]=1; }));
+  return st;
+}
+if(!ST){ ST=stBackfill(); store.set('stats',ST); } // 載入時就建立，避免第一題被重複計算
+function stAdd(a,b,w,d){ if(!ST) ST=stBackfill(); [a,b].forEach(id=>{ ST.seen[id]=Math.max(0,(ST.seen[id]||0)+d); if(!ST.seen[id]) delete ST.seen[id]; }); ST.wins[w]=Math.max(0,(ST.wins[w]||0)+d); if(!ST.wins[w]) delete ST.wins[w]; ST.ans=Math.max(0,ST.ans+d); store.set('stats',ST); }
 function choose(side){
   const s=R.sessions[R.mode]; if(!s||!R.cur||R.cur.done) return;
   const w = side==='a'?R.cur.a:R.cur.b;
-  s.answers.push([R.cur.a,R.cur.b,w]); saveSessions(); showRank();
+  s.answers.push([R.cur.a,R.cur.b,w]); stAdd(R.cur.a,R.cur.b,w,1); saveSessions(); showRank();
 }
 let mInfo=false;
 document.addEventListener('click',e=>{ const b=e.target.closest('[data-info]'); if(!b) return; e.preventDefault(); mInfo=!mInfo; ['#cardA','#cardB'].forEach(c=>$(c).classList.toggle('showinfo',mInfo)); });
@@ -1244,7 +1337,7 @@ $('#rank-battle').addEventListener('click',e=>{const b=e.target.closest('button.
 $('#skipBtn').onclick=skipQuestion;
 $('#mpA').onclick=()=>choose('a'); $('#mpB').onclick=()=>choose('b');
 $('#mpUndo').onclick=()=>$('#undoBtn').click(); $('#mpSkip').onclick=skipQuestion;
-$('#undoBtn').onclick=()=>{const s=R.sessions[R.mode]; if(s&&s.answers.length){s.answers.pop();saveSessions();showRank();}};
+$('#undoBtn').onclick=()=>{const s=R.sessions[R.mode]; if(s&&s.answers.length){const [a,b,w]=s.answers.pop(); stAdd(a,b,w,-1); saveSessions();showRank();}};
 $('#quitBtn').onclick=()=>{ if($('#quitBtn').dataset.arm){ R.sessions[R.mode]=null; saveSessions(); delete $('#quitBtn').dataset.arm; $('#quitBtn').textContent='結束並放棄'; showRank(); } else { $('#quitBtn').dataset.arm=1; $('#quitBtn').textContent='再按一次確認放棄'; setTimeout(()=>{delete $('#quitBtn').dataset.arm;$('#quitBtn').textContent='結束並放棄';},3000);} };
 document.addEventListener('keydown',e=>{
   if($('#rank-battle').classList.contains('hidden')||tab!==R.mode) return;
@@ -1281,7 +1374,7 @@ function showResult(s,order){
   $('#resultList').innerHTML = order.map((id,i)=>{const t=TR[id];return `<li><span class="rank ${i<3?'r'+(i+1):''}">${i+1}</span>${playBtn(t)}<div class="t" style="flex:1;min-width:0"><div>${tHtml(t)}</div><div class="small muted">${exTag(t.ex)} ${catTag(t.cat)} ${esc(t.album)}</div>${rsBits(t).line}</div>${favBtn(t)}${rsBits(t).btn}</li>`}).join('');
   if(!s.done){ s.done=true; const h=store.get('hist',[]); h.unshift({title:s.title,date:new Date().toISOString(),order,cmp:s.answers.length,ctx:s.ctx||null}); store.set('hist',h.slice(0,50)); saveSessions(); }
 }
-$('#againBtn').onclick=()=>{ R.sessions[R.mode]=null; saveSessions(); if(R.mode==='final') startFinal(); else showRank(); };
+$('#againBtn').onclick=()=>{ R.sessions[R.mode]=null; saveSessions(); if(R.mode==='final') startFinal(); else if(R.mode==='pool') startUnseen(); else showRank(); };
 $('#applyFinal').onclick=()=>{
   if(!lastResult) return; const rest=favs.filter(id=>!lastResult.order.includes(id));
   favs=[...lastResult.order.filter(id=>TR[id]),...rest]; saveFavs(); setTab('fav'); toast(T('已依決戰結果更新喜好清單的名次'));
@@ -1782,7 +1875,7 @@ $('#viewBox').onclick=e=>{
 
 // init
 if(!EMBED_OK) $('#fileBanner').classList.remove('hidden');
-const TABS=['hot','album','cat','final','fav','lib','hist','buy'];
+const TABS=['hot','album','cat','final','pool','fav','stats','lib','hist','buy'];
 const start = (location.hash||'').slice(1);
 function routeHash(t,first){
   if(t.startsWith('s=')) openView(t.slice(2));
