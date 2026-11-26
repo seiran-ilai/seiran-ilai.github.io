@@ -40,6 +40,12 @@ header{display:flex;align-items:center;gap:16px;padding:14px 20px;border-bottom:
 header h1{font-size:19px;margin:0;color:var(--gold);letter-spacing:.5px}
 nav{display:flex;gap:6px;flex-wrap:wrap}
 nav button{background:transparent;border-color:transparent;color:var(--muted)}
+.ic{width:1.05em;height:1.05em;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;vertical-align:-.16em}
+nav button{display:inline-flex;align-items:center;gap:.4em}
+nav button .ic{opacity:.75}
+nav button.on .ic{opacity:1;color:var(--gold)}
+h2.ich{display:flex;align-items:center;gap:.45em}
+h2.ich .ic{color:var(--gold);width:1.1em;height:1.1em}
 nav button.on{color:var(--text);border-color:var(--gold);background:rgba(242,180,58,.08)}
 main{max-width:1180px;margin:0 auto;padding:20px 20px 120px}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
@@ -254,6 +260,8 @@ body.dragging-fav,body.dragging-fav *{cursor:grabbing!important;user-select:none
 .bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--gold),#ff8a3d);border-radius:99px}
 .strow{display:grid;grid-template-columns:minmax(90px,150px) 1fr auto;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid #22222a;font-size:13.5px}
 .strow .n{font-size:12px;color:var(--muted);white-space:nowrap}
+#histList li .favbtn{padding:0 6px;margin-left:4px}
+.stgh{margin:16px 0 0;font-size:.95rem}
 .stalb{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin-top:10px}
 .stalb .a{display:flex;gap:10px;align-items:center;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:8px}
 .stalb .a .cov{width:64px;height:64px;border-radius:8px;cursor:pointer;position:relative;flex:none}
@@ -384,14 +392,14 @@ select{max-width:100%}
 <header>
   <h1>FF14 音樂排名</h1>
   <nav id="nav">
-    <button data-tab="hot">🔥 熱門 100 首</button>
-    <button data-tab="album">① 專輯排名</button>
-    <button data-tab="cat">② 分類排名</button>
-    <button data-tab="fav">❤️ 喜好清單</button>
-    <button data-tab="lib">曲庫／自訂曲目</button>
-    <button data-tab="stats">📊 統計</button>
-    <button data-tab="hist">排名紀錄</button>
-    <button data-tab="buy">💿 支持原作</button>
+    <button data-tab="hot"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c.8 3.3 5 5.4 5 10.2A5 5 0 0 1 7 13.4c0-2.3 1.1-3.8 2.3-4.8.2 1.7 1 2.7 2 3.2C10.9 8.9 11.3 6 12 3z"/></svg><span>熱門 100 首</span></button>
+    <button data-tab="album"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 6.5A5.5 5.5 0 0 0 6.5 12"/></svg><span>專輯排名</span></button>
+    <button data-tab="cat"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 7.5l9 4.5 9-4.5z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></svg><span>分類排名</span></button>
+    <button data-tab="fav"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7.5-4.6-7.5-10.2A4.2 4.2 0 0 1 12 7.4a4.2 4.2 0 0 1 7.5 2.4C19.5 15.4 12 20 12 20z"/></svg><span>喜好清單</span></button>
+    <button data-tab="lib"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg><span>曲庫／自訂曲目</span></button>
+    <button data-tab="stats"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21h18"/><path d="M6 17v-5"/><path d="M11 17V7"/><path d="M16 17v-8"/><path d="M20 17v-3"/></svg><span>統計</span></button>
+    <button data-tab="hist"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"/><path d="M3.5 3.5v5h5"/><path d="M12 7.5V12l3 2"/></svg><span>排名紀錄</span></button>
+    <button data-tab="buy"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 7.5h13l-1.2 12.5H6.7z"/><path d="M9 7.5a3 3 0 0 1 6 0"/></svg><span>支持原作</span></button>
   </nav>
   <label class="spsel" data-noi18n>🌐 <select id="langSel" aria-label="Language"></select></label>
   <label class="spsel" title="比你進度新的版本內容（使用場景、樂譜入手方式）會先摺起來">🛡 <span class="sptxt">防劇透・我玩到</span> <select id="spoilerSel"></select></label>
@@ -407,11 +415,11 @@ select{max-width:100%}
   <section id="tab-rank">
     <div id="rank-setup" class="panel">
       <div id="setup-hot" class="hidden">
-        <h2>🔥 熱門 100 首比拚（簡易版）</h2>
+        <h2 class="ich"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c.8 3.3 5 5.4 5 10.2A5 5 0 0 1 7 13.4c0-2.3 1.1-3.8 2.3-4.8.2 1.7 1 2.7 2 3.2C10.9 8.9 11.3 6 12 3z"/></svg><span>熱門 100 首比拚（簡易版）</span></h2>
         <div class="muted small">依 YouTube 官方音源（各原聲帶專輯）的觀看次數，取播放量最高的 100 首（2026 年 11 月統計，含版本原聲帶）。想快一點就選「只選前 3 名」，也可以先取消勾選不熟的曲子。<br>註：較新的資料片上架時間短、累積播放量較少，所以曲目會偏向舊資料片。</div>
       </div>
       <div id="setup-album">
-        <h2>① 選擇一張或多張專輯，用二選一幫曲目排名</h2>
+        <h2 class="ich"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 6.5A5.5 5.5 0 0 0 6.5 12"/></svg><span>選擇一張或多張專輯，用二選一幫曲目排名</span></h2>
         <div class="row" style="justify-content:space-between">
           <span class="muted small">可以複選，例如把管弦樂和鋼琴專輯放在一起排名。</span>
           <span class="row"><span class="small" id="albumInfo"></span><button class="ghost" id="albumNone">全部取消</button></span>
@@ -419,7 +427,7 @@ select{max-width:100%}
         <div id="albumPick"></div>
       </div>
       <div id="setup-cat" class="hidden">
-        <h2>② 依曲目性質排名</h2>
+        <h2 class="ich"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 7.5l9 4.5 9-4.5z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></svg><span>依曲目性質排名</span></h2>
         <div class="muted small">選擇資料片（可複選）與曲目類型，例如「全部資料片的討伐戰」或「紅蓮＋漆黑的地圖」。</div>
         <h3>資料片</h3>
         <div class="row" id="exChips"></div>
@@ -465,7 +473,7 @@ select{max-width:100%}
     <div id="rank-result" class="panel hidden">
       <div class="row" style="justify-content:space-between">
         <h2 style="margin:0" class="row"><span id="resultTitle"></span><button class="ghost rsbtn" data-rename="result" title="改名稱">✎</button></h2>
-        <div class="row"><button class="primary" id="shareResult">📤 分享結果</button><button id="copyResult">複製文字</button><button id="applyFinal" class="hidden">⚔️ 套用到喜好清單順序</button><button id="againBtn">再排一次</button></div>
+        <div class="row"><button class="primary" id="shareResult">📤 分享結果</button><button id="shareAll" class="hidden"></button><button id="copyResult">複製文字</button><button id="applyFinal" class="hidden">⚔️ 套用到喜好清單順序</button><button id="againBtn">再排一次</button></div>
       </div>
       <div class="result" style="margin-top:12px"><ol id="resultList"></ol></div>
     </div>
@@ -474,7 +482,7 @@ select{max-width:100%}
   <!-- library -->
   <section id="tab-lib" class="hidden">
     <div class="panel">
-      <h2>曲庫</h2>
+      <h2 class="ich"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg><span>曲庫</span></h2>
       <div class="muted small">共 <b id="libTotal"></b> 首，來自 YouTube Music 官方上架專輯。分類（地圖／4人本／討伐…）是預先標註的，若覺得不對，可在右側下拉直接改，會套用到排名。</div>
       <div class="row" style="margin-top:12px">
         <input type="search" id="libSearch" placeholder="搜尋曲名（中日英皆可）" style="flex:1;min-width:200px">
@@ -506,7 +514,7 @@ select{max-width:100%}
   <!-- history -->
   <section id="tab-hist" class="hidden">
     <div class="panel">
-      <h2>排名紀錄</h2>
+      <h2 class="ich"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"/><path d="M3.5 3.5v5h5"/><path d="M12 7.5V12l3 2"/></svg><span>排名紀錄</span></h2>
       <div class="muted small">完成的排名會存在這台電腦的瀏覽器裡。</div>
       <div id="histList" style="margin-top:12px"></div>
     </div>
@@ -515,7 +523,7 @@ select{max-width:100%}
   <!-- favourites -->
   <section id="tab-fav" class="hidden">
     <div class="panel">
-      <h2>❤️ 喜好清單</h2>
+      <h2 class="ich"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7.5-4.6-7.5-10.2A4.2 4.2 0 0 1 12 7.4a4.2 4.2 0 0 1 7.5 2.4C19.5 15.4 12 20 12 20z"/></svg><span>喜好清單</span></h2>
       <div class="muted small">在曲庫、二選一、排名結果按 ♡，或在下方搜尋曲名，就會加進來；也可以從排名一次加入。左邊的數字可以直接改名次（或按住 ⠿ 拖曳），前 10 名會放進分享圖；按「⚔️ 最終決戰」可以用二選一把整份清單重新排一次；按 📣 可以單獨分享「這是我推的曲子！」。整理好之後按「在 YouTube 播放」，會開一個 YouTube 暫時播放清單（可在 YouTube 按「儲存」存到你的帳號）。只有 YouTube 上有音源的曲目會放進播放清單。</div>
       <div class="favadd">
         <div class="row">
@@ -549,7 +557,7 @@ select{max-width:100%}
   <!-- buy -->
   <section id="tab-buy" class="hidden">
     <div class="panel">
-      <h2>💿 支持原作：專輯購入管道</h2>
+      <h2 class="ich"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 7.5h13l-1.2 12.5H6.7z"/><path d="M9 7.5a3 3 0 0 1 6 0"/></svg><span>支持原作：專輯購入管道</span></h2>
       <div class="muted small">這個網站能試聽，全靠 Square Enix 把原聲帶放上串流平台。喜歡的話，請用正版購買或串流收聽支持祖堅正慶與 FF14 音樂團隊。</div>
       <h3>官方管道</h3>
       <div class="buyoff">
@@ -590,6 +598,11 @@ select{max-width:100%}
     <div class="row small" style="margin-top:10px">
       <label class="row">顯示名稱：<input type="text" id="shName" placeholder="你的名字／角色名（選填）" style="width:200px"></label>
       <label class="row muted"><input type="checkbox" id="shReasons" checked> 包含喜歡的理由</label>
+    </div>
+    <div class="row small hidden" id="shScopeWrap" style="margin-top:10px;gap:12px">
+      <span>範圍：</span>
+      <label class="row" style="gap:4px"><input type="radio" name="shScope" value="top"> 前 10 名（一張圖）</label>
+      <label class="row" style="gap:4px"><input type="radio" name="shScope" value="all"> <span id="shAllLab"></span></label>
     </div>
     <div class="row small" style="margin-top:10px;gap:8px">
       <span>主題：</span><span class="row" id="shThemes" style="gap:6px"></span>
@@ -1034,14 +1047,17 @@ function renderStats(){
   const exRows=barRows(agg(t=>EXK.includes(t.ex)?t.ex:''),o=>`<b style="color:${EX[o.k].c}">${EX[o.k].n}</b>`);
   const catRows=barRows(agg(t=>CATK.includes(t.cat)?t.cat:''),o=>catTag(o.k));
   // 專輯：依勝率排名（沒比過的放最後），點封面開始
-  const albs=DATA.albums.filter(a=>!a.na||albumTracks(a.k).some(t=>t.vid)).map(a=>{ const L=albumTracks(a.k); const app=L.reduce((x,t)=>x+(ST.seen[t.id]||0),0), win=L.reduce((x,t)=>x+(ST.wins[t.id]||0),0), sn=L.filter(t=>ST.seen[t.id]).length; return {a,n:L.length,app,win,sn,rate:app?win/app:-1}; }).filter(o=>o.n>0);
+  const albs=DATA.albums.map(a=>{ const L=albumTracks(a.k); const app=L.reduce((x,t)=>x+(ST.seen[t.id]||0),0), win=L.reduce((x,t)=>x+(ST.wins[t.id]||0),0), sn=L.filter(t=>ST.seen[t.id]).length; return {a,n:L.length,app,win,sn,rate:app?win/app:-1}; }).filter(o=>o.n>0);
   albs.sort((x,y)=>y.rate-x.rate||y.sn-x.sn);
-  let rk=0;
-  const albHtml=albs.map(o=>{ const r=o.rate>=0?++rk:''; return `<div class="a"><span class="rk">${r}</span><span class="cov" data-stalb="${o.a.k}" title="${esc(o.a.n)}">${coverImg(o.a.k).replace(/^<span class="cov"[^>]*>|<\/span>$/g,'')}<span class="go">▶</span></span><div style="flex:1;min-width:0"><div class="nm">${esc(o.a.n)}</div><div class="bar" style="margin-top:6px"><i style="width:${Math.round(o.sn/o.n*100)}%"></i></div><div class="meta">${o.sn} / ${o.n} 首・${o.rate>=0?pct(o.rate):'—'}</div></div></div>`; }).join('');
+  let rk=0; albs.forEach(o=>{ o.rk=o.rate>=0?++rk:''; });
+  // 分組跟「支持原作」頁一樣；組內依勝率排，數字是全部專輯中的偏好名次
+  const albCard=o=>{ const r=o.rk; return `<div class="a"><span class="rk">${r}</span><span class="cov" data-stalb="${o.a.k}" title="${esc(o.a.n)}">${coverImg(o.a.k).replace(/^<span class="cov"[^>]*>|<\/span>$/g,'')}<span class="go">▶</span></span><div style="flex:1;min-width:0"><div class="nm">${esc(o.a.n)}</div><div class="bar" style="margin-top:6px"><i style="width:${Math.round(o.sn/o.n*100)}%"></i></div><div class="meta">${o.sn} / ${o.n} 首・${o.rate>=0?pct(o.rate):'—'}</div></div></div>`; };
+  const albHtml=ALBUM_GROUPS.map(([lab,ty])=>{ const L=albs.filter(o=>o.a.t===ty); if(!L.length) return ''; const sn=L.reduce((x,o)=>x+o.sn,0), n=L.reduce((x,o)=>x+o.n,0);
+    return `<h4 class="stgh">${lab} <span class="muted small">${TF('{0} / {1} 首',sn,n)}</span></h4><div class="stalb">${L.map(albCard).join('')}</div>`; }).join('');
   const top=Object.entries(ST.wins).filter(([id])=>TR[id]).sort((a,b)=>b[1]-a[1]||(ST.seen[a[0]]||0)-(ST.seen[b[0]]||0)).slice(0,10);
   const topHtml=top.length?`<ol class="result" style="padding:0;margin:8px 0 0">${top.map(([id,w],i)=>{ const t=TR[id], app=ST.seen[id]||w; return `<li><span class="rank ${i<3?'r'+(i+1):''}">${i+1}</span>${playBtn(t)}<div class="t" style="flex:1;min-width:0"><div>${tdLink(t)}</div><div class="small muted">${exTag(t.ex)} ${esc(t.album||'')}</div></div><span class="small muted" style="white-space:nowrap">${w} 勝・${pct(w/app)}</span>${favBtn(t)}</li>`; }).join('')}</ol>`:'<div class="muted small">還沒有資料，先去排一輪吧。</div>';
   const hist=store.get('hist',[]), nReasons=Object.keys(reasons).length;
-  $('#statsBox').innerHTML=`<h2>📊 統計</h2><div class="muted small">只記錄在這台裝置的瀏覽器裡。勝率＝該曲出場時被選中的比例；占比＝佔全部勝場的比例。</div>
+  $('#statsBox').innerHTML=`<h2 class="ich"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21h18"/><path d="M6 17v-5"/><path d="M11 17V7"/><path d="M16 17v-8"/><path d="M20 17v-3"/></svg><span>統計</span></h2><div class="muted small">只記錄在這台裝置的瀏覽器裡。勝率＝該曲出場時被選中的比例；占比＝佔全部勝場的比例。</div>
     <div class="stgrid">
       <div class="stcard stbig"><div><div class="v">${pct(seen.length/all.length)}</div><div class="l">整體完成度</div></div><div class="bar" style="height:14px"><i style="width:${(seen.length/all.length*100).toFixed(1)}%"></i></div><div class="small muted">已比過 ${seen.length} / ${all.length} 首</div></div>
       <div class="stcard"><div class="v">${ST.ans}</div><div class="l">累計作答題數</div></div>
@@ -1054,7 +1070,7 @@ function renderStats(){
     <div class="row" style="margin-top:12px"><button class="primary" id="stUnseen">🎲 從還沒比過的曲目抽 20 首開始</button></div>
     <h3>資料片偏好（勝率・占比）</h3>${exRows}
     <h3>類型偏好（勝率・占比）</h3>${catRows}
-    <h3>各專輯偏好排名・完成度 <span class="muted small">點封面直接開始比較</span></h3><div class="stalb">${albHtml}</div>
+    <h3>各專輯偏好排名・完成度 <span class="muted small">點封面直接開始比較・數字是全部專輯中的偏好名次</span></h3>${albHtml}
     <h3>最常勝出的曲目</h3>${topHtml}
     <div class="row" style="margin-top:18px;justify-content:flex-end"><button class="ghost" id="stReset">重設統計</button></div>`;
 }
@@ -1418,6 +1434,7 @@ function showResult(s,order){
   $('#applyFinal').classList.toggle('hidden',R.mode!=='final');
   $('#resultTitle').textContent = TF('{0} 結果',dispTitle(s));
   lastResult={title:s.title,order,ctx:s.ctx||null};
+  $('#shareAll').classList.toggle('hidden',order.length<=10); $('#shareAll').textContent=TF('🗂 分享完整排名（{0} 張圖）',rankPageCount(order.length));
   $('#resultList').innerHTML = order.map((id,i)=>{const t=TR[id];return `<li><span class="rank ${i<3?'r'+(i+1):''}">${i+1}</span>${playBtn(t)}<div class="t" style="flex:1;min-width:0"><div>${tdLink(t)}</div><div class="small muted">${exTag(t.ex)} ${catTag(t.cat)} ${esc(t.album)}</div>${rsBits(t).line}</div>${favBtn(t)}${rsBits(t).btn}</li>`}).join('');
   if(!s.done){ s.done=true; const h=store.get('hist',[]); h.unshift({title:s.title,date:new Date().toISOString(),order,cmp:s.answers.length,ctx:s.ctx||null}); store.set('hist',h.slice(0,50)); saveSessions(); }
 }
@@ -1427,6 +1444,7 @@ $('#applyFinal').onclick=()=>{
   favs=[...lastResult.order.filter(id=>TR[id]),...rest]; saveFavs(); setTab('fav'); toast(T('已依決戰結果更新喜好清單的名次'));
 };
 $('#shareResult').onclick=()=>{ if(lastResult) openShare('rank',lastResult); };
+$('#shareAll').onclick=()=>{ if(lastResult) openShare('rank',lastResult,{all:true}); };
 $('#copyResult').onclick=()=>{ if(!lastResult) return; copyText(dispTitle(lastResult)+'\n'+lastResult.order.map((id,i)=>`${i+1}. ${TR[id]?tText(TR[id]):id}${reasons[id]?`（${reasons[id]}）`:''}`).join('\n')+'\n\n'+baseUrl()); };
 
 // 串流平台未上架的專輯說明（曲庫頁用）
@@ -1555,18 +1573,48 @@ async function drawRankCard(d,opt){
       if(rs){ g.fillStyle=TH.reason; g.font=`600 21px ${FONT}`; wrapText(g,'「'+rs+'」',tx,ty+32,tw,28,2,'left'); }
       y+=h+14;
     } else {
-      const h=rs?98:80, tx=PAD+70+112+18, tw=W-PAD-12-tx;
-      g.fillStyle=TH.card2; roundRect(g,PAD,y,W-PAD*2,h,12); g.fill();
-      g.textAlign='center'; g.fillStyle=TH.sub; g.font=`900 34px ${FONT}`; g.fillText(String(i+1),PAD+36,y+h/2+12);
-      drawImgCover(g,ims[i],PAD+70,y+(h-63)/2,112,63,6,ex.c);
-      g.textAlign='left'; g.fillStyle=TH.text; g.font=`800 26px ${FONT}`; g.fillText(fitLine(g,nm,tw),tx,y+(rs?34:36));
-      if(rs){ g.fillStyle=TH.reason; g.font=`600 19px ${FONT}`; g.fillText(fitLine(g,'「'+rs+'」',tw),tx,y+62); }
-      g.fillStyle=exCol(ex.c); g.font=`700 18px ${FONT}`; const exl=T(ex.n)+'　'; g.fillText(exl,tx,y+(rs?88:64)); const ew=g.measureText(exl).width;
-      g.fillStyle=TH.sub; g.font=`500 18px ${FONT}`; g.fillText(fitLine(g,T(t.album||''),tw-ew),tx+ew,y+(rs?88:64));
-      y+=h+10;
+      y+=drawSmallRow(g,t,i,ims[i],y,opt)+10;
     }
   });
-  if(more>0){ g.textAlign='left'; g.fillStyle=TH.sub; g.font=`700 22px ${FONT}`; g.fillText(T(`…以及其他 ${more} 首`),PAD,y+26); y+=44; }
+  if(more>0){ g.textAlign='left'; g.fillStyle=TH.sub; g.font=`700 22px ${FONT}`; g.fillText(opt.pages?TF('接下一張：第 {0} 名起（共 {1} 首）',11,d.order.length):T(`…以及其他 ${more} 首`),PAD,y+26); y+=44; }
+  if(opt.pages){ g.textAlign='right'; g.fillStyle=TH.sub; g.font=`800 24px ${FONT}`; g.fillText('1 / '+opt.pages,W-PAD,PAD+32); g.textAlign='left'; }
+  return finishRankCard(cv,y);
+}
+// 小列（第 4 名之後）
+function drawSmallRow(g,t,i,im,y,opt){
+  const W=1080, PAD=60, ex=EX[t.ex]||EX.c, rs=opt.reasons&&reasons[t.id]?reasons[t.id]:'', nm=t.zh||t.title;
+  const h=rs?98:80, tx=PAD+70+112+18, tw=W-PAD-12-tx;
+  g.fillStyle=TH.card2; roundRect(g,PAD,y,W-PAD*2,h,12); g.fill();
+  g.textAlign='center'; g.fillStyle=TH.sub; g.font=`900 ${i>=99?28:34}px ${FONT}`; g.fillText(String(i+1),PAD+36,y+h/2+12);
+  drawImgCover(g,im,PAD+70,y+(h-63)/2,112,63,6,ex.c);
+  g.textAlign='left'; g.fillStyle=TH.text; g.font=`800 26px ${FONT}`; g.fillText(fitLine(g,nm,tw),tx,y+(rs?34:36));
+  if(rs){ g.fillStyle=TH.reason; g.font=`600 19px ${FONT}`; g.fillText(fitLine(g,'「'+rs+'」',tw),tx,y+62); }
+  g.fillStyle=exCol(ex.c); g.font=`700 18px ${FONT}`; const exl=T(ex.n)+'　'; g.fillText(exl,tx,y+(rs?88:64)); const ew=g.measureText(exl).width;
+  g.fillStyle=TH.sub; g.font=`500 18px ${FONT}`; g.fillText(fitLine(g,T(t.album||''),tw-ew),tx+ew,y+(rs?88:64));
+  return h;
+}
+// 完整排名：第 1 張同原本（前 10 名），之後每張 20 名
+async function drawRankPages(d,opt){
+  TH=opt.theme||shareTheme();
+  const n=d.order.length, P=rankPageCount(n), out=[await drawRankCard(d,Object.assign({},opt,{pages:P}))];
+  for(let p=1;p<P;p++){
+    const st=10+(p-1)*RANK_PER_PAGE, en=Math.min(n,st+RANK_PER_PAGE), W=1080, PAD=60;
+    const ts=d.order.slice(st,en).map(id=>TR[id]||{id,title:String(id),album:'',ex:'c'});
+    const ims=await Promise.all(ts.map(t=>loadImg(t.vid?'https://i.ytimg.com/vi/'+t.vid+'/mqdefault.jpg':coverUrl(t.ak))));
+    const cv=document.createElement('canvas'); cv.width=W; cv.height=2600; const g=cv.getContext('2d'); g.textBaseline='alphabetic';
+    let y=PAD+6;
+    g.textAlign='left'; g.fillStyle=TH.accent; g.font='800 26px '+FONT; g.fillText(T('FINAL FANTASY XIV ♪ 音樂排名'),PAD,y+26);
+    g.textAlign='right'; g.fillStyle=TH.sub; g.font='800 24px '+FONT; g.fillText((p+1)+' / '+P,W-PAD,y+26); g.textAlign='left'; y+=54;
+    g.fillStyle=TH.text; g.font='900 38px '+FONT; g.fillText(fitLine(g,dispTitle(d),W-PAD*2),PAD,y+38); y+=54;
+    g.fillStyle=TH.hi; g.font='800 26px '+FONT; g.fillText(TF('第 {0}–{1} 名',st+1,en)+(opt.name?'　by '+opt.name:''),PAD,y+26); y+=56;
+    ts.forEach((t,j)=>{ y+=drawSmallRow(g,t,st+j,ims[j],y,opt)+10; });
+    if(en<n){ g.fillStyle=TH.sub; g.font='700 22px '+FONT; g.fillText(TF('接下一張：第 {0} 名起（共 {1} 首）',en+1,n),PAD,y+26); y+=44; }
+    out.push(finishRankCard(cv,y));
+  }
+  return out;
+}
+function finishRankCard(cv,y){
+  const W=1080, PAD=60;
   const FOOT=108, H=Math.max(1080,y+FOOT);
   const out=document.createElement('canvas'); out.width=W; out.height=H; const o=out.getContext('2d');
   paintBg(o,W,H); o.drawImage(cv,0,0,W,y,0,0,W,y);
@@ -1624,8 +1672,8 @@ $('#cuAdd').onclick=()=>{
 function renderHist(){
   const h=store.get('hist',[]);
   $('#histList').innerHTML = h.length? h.map((r,i)=>`<details class="panel" style="margin-bottom:10px;padding:12px"><summary style="cursor:pointer"><b>${esc(dispTitle(r))}</b> <span class="muted small">${new Date(r.date).toLocaleString(LANG)}<span>・${r.order.length} 首・${r.cmp} 次比較</span></span></summary>
-  <ol style="margin:10px 0 0;padding-left:28px">${r.order.map(id=>{const t=TR[id];return `<li style="padding:3px 0">${t?playBtn(t)+' '+tdLink(t):esc(id)}</li>`}).join('')}</ol>
-  <div class="row" style="margin-top:8px"><button class="primary" data-hshare="${i}">📤 分享</button><button data-hren="${i}">✎ 改名稱</button><button data-hcopy="${i}">複製文字</button><button class="ghost" data-hdel="${i}">刪除</button></div></details>`).join('') : '<div class="muted">還沒有完成的排名。</div>';
+  <ol style="margin:10px 0 0;padding-left:28px">${r.order.map(id=>{const t=TR[id];return `<li style="padding:3px 0">${t?playBtn(t)+' '+tdLink(t)+' '+favBtn(t):esc(id)}</li>`}).join('')}</ol>
+  <div class="row" style="margin-top:8px"><button class="primary" data-hshare="${i}">📤 分享</button>${r.order.length>10?`<button data-hfav="${i}" data-n="10" title="把前 10 名放到喜好清單最前面，並照名次排">♥ 前 10 名加入喜好清單</button>`:''}<button data-hfav="${i}" title="把這份排名的曲目放到喜好清單最前面，並照這份排名的順序排">${r.order.length>10?'♥ 全部加入喜好清單':'♥ 加入喜好清單'}</button><button data-hren="${i}">✎ 改名稱</button><button data-hcopy="${i}">複製文字</button><button class="ghost" data-hdel="${i}">刪除</button></div></details>`).join('') : '<div class="muted">還沒有完成的排名。</div>';
 }
 // 改名稱：同步更新進行中的排名、結果與排名紀錄
 function askName(cur){ const v=prompt(T('排名名稱（留空＝自動名稱）'),cur||''); return v===null?null:v.trim().slice(0,40); }
@@ -1646,6 +1694,11 @@ document.addEventListener('click',e=>{
 $('#histList').onclick=e=>{
   const rn=e.target.closest('[data-hren]'); if(rn){ const h=store.get('hist',[]); const r=h[+rn.dataset.hren]; const v=askName((r.ctx&&r.ctx.t)||dispTitle(r)); if(v===null) return; if(!r.ctx){ if(v) r.title=v; } else setCtxName(r.ctx,v); store.set('hist',h); renderHist(); toast(T('已更新名稱')); return; }
   const c=e.target.closest('[data-hcopy]'), d=e.target.closest('[data-hdel]'); const h=store.get('hist',[]);
+  const hf=e.target.closest('[data-hfav]'); if(hf){ const r=h[+hf.dataset.hfav]; if(!r) return;
+    const ord=r.order.filter(id=>TR[id]).slice(0,+hf.dataset.n||undefined); const added=ord.filter(id=>!isFav(id)).length;
+    favs=[...ord,...favs.filter(id=>!ord.includes(id))]; saveFavs();
+    const op=[...document.querySelectorAll('#histList details')].map(x=>x.open); renderHist(); document.querySelectorAll('#histList details').forEach((x,i)=>x.open=op[i]);
+    toast(TF('已用「{0}」更新喜好清單：新增 {1} 首，並依排名重新排序',dispTitle(r),added)); return; }
   const sh=e.target.closest('[data-hshare]'); if(sh){const r=h[+sh.dataset.hshare]; openShare('rank',{title:r.title,order:r.order,ctx:r.ctx||null}); return;}
   if(c){const r=h[+c.dataset.hcopy]; copyText(dispTitle(r)+'\n'+r.order.map((id,i)=>`${i+1}. ${TR[id]?tText(TR[id]):id}${reasons[id]?`（${reasons[id]}）`:''}`).join('\n'));}
   if(d){h.splice(+d.dataset.hdel,1); store.set('hist',h); renderHist();}
@@ -1721,8 +1774,14 @@ const canShareFiles=()=>{ try{ return !!(navigator.canShare&&navigator.canShare(
 function shareFileName(i,n){ const nm=$('#shName').value.trim()||T('我'); const b=`${T('FF14音樂排名')}_${nm}`; return n>1?`${b}_${i+1}.png`:`${b}.png`; }
 function shareFiles(){ const n=SH.blobs.length; return SH.blobs.map((b,i)=>new File([b],shareFileName(i,n),{type:'image/png'})); }
 function downloadAll(){ const n=SH.blobs.length; SH.blobs.forEach((b,i)=>setTimeout(()=>downloadBlob(b,shareFileName(i,n)),i*450)); }
-function openShare(kind,d){
+const RANK_PER_PAGE=20;
+const rankPageCount=n=>n<=10?1:1+Math.ceil((n-10)/RANK_PER_PAGE);
+function openShare(kind,d,o){
   SH.kind=kind; SH.d=d;
+  const n=d&&d.order?d.order.length:0, canAll=kind==='rank'&&n>10;
+  SH.all=canAll&&(o&&o.all!=null?!!o.all:store.get('shAll',false));
+  $('#shScopeWrap').classList.toggle('hidden',!canAll);
+  if(canAll){ $('#shAllLab').textContent=TF('全部 {0} 首（分成 {1} 張圖）',n,rankPageCount(n)); document.querySelectorAll('[name=shScope]').forEach(r=>r.checked=(r.value==='all')===SH.all); }
   $('#shTitle').textContent=kind==='one'?'分享我推的曲子':d&&d.ctx&&d.ctx.m==='fav'?'分享喜好清單':'分享排名結果';
   $('#shName').value=store.get('shName','');
   SH.d=Object.assign({},d,{ctx:Object.assign({},d&&d.ctx||{})});
@@ -1744,7 +1803,9 @@ async function rebuildShare(){
   try{
     const payload=rankPayload(SH.d,name,withR);
     const url=baseUrl()+'#s='+await packObj(payload);
-    const cvs=[SH.kind==='one'?await drawOneCard(TR[SH.d.order[0]],{name,reasons:withR,title:SH.d.ctx&&SH.d.ctx.t}):await drawRankCard(SH.d,{name,reasons:withR})];
+    const cvs=SH.kind==='one'?[await drawOneCard(TR[SH.d.order[0]],{name,reasons:withR,title:SH.d.ctx&&SH.d.ctx.t})]
+      :SH.all&&SH.d.order.length>10?await drawRankPages(SH.d,{name,reasons:withR})
+      :[await drawRankCard(SH.d,{name,reasons:withR})];
     const blobs=await Promise.all(cvs.map(canvasBlob));
     if(my!==SH.seq) return;
     SH.url=url; SH.blobs=blobs; SH.compact=compactRankUrl(SH.d,name);
@@ -1797,6 +1858,7 @@ function updShareCount(){ const n=charLen($('#shText').value); $('#shCount').tex
 let shTimer=null;
 $('#shName').oninput=()=>{ const v=$('#shName').value.trim(); store.set('shName',v); clearTimeout(shTimer); shTimer=setTimeout(rebuildShare,450); };
 $('#shTitleIn').oninput=()=>{ const v=$('#shTitleIn').value.trim(); if(v&&v!==SH.titleDefault) SH.d.ctx.t=v; else delete SH.d.ctx.t; clearTimeout(shTimer); shTimer=setTimeout(rebuildShare,450); };
+document.querySelectorAll('[name=shScope]').forEach(r=>r.onchange=()=>{ SH.all=r.value==='all'&&r.checked; store.set('shAll',SH.all); rebuildShare(); });
 $('#shReasons').onchange=()=>{ store.set('shReasons',$('#shReasons').checked); rebuildShare(); };
 $('#shLink').onchange=()=>{ store.set('shLink',$('#shLink').checked); rebuildShare(); };
 $('#shText').oninput=updShareCount;
