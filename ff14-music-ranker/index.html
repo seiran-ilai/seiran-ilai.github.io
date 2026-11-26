@@ -1217,7 +1217,7 @@ function estimateCmp(n,K){ // simulate with random answers
     tot+=c; }
   return estCache[key]=Math.round(tot/runs);
 }
-const topKOf=m=>store.get('topK_'+m,m==='hot'?'0':store.get('topK','10'));
+const topKOf=m=>store.get('topK_'+m,'0'); // 預設完整排名
 $('#topK').value=topKOf(R.mode);
 $('#topK').onchange=()=>{store.set('topK_'+R.mode,$('#topK').value);renderPool();};
 
