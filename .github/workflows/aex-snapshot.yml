@@ -2,8 +2,15 @@ name: 艾奧傑亞證券交易所｜行情資料更新
 
 on:
   schedule:
-    - cron: '0,30 * * * *'   # 每 30 分鐘：整點、半點（GitHub 排程不保證準時，整點較擁擠，可能延遲數分鐘）
-  workflow_dispatch:          # 可在 Actions 頁面手動執行
+    # 每 30 分鐘：整點、半點。注意：GitHub 排程實際上常延誤數小時甚至跳過（2026-11 實測一天只跑 2～3 次），
+    # 所以主要靠外部定時服務在 00、30 分呼叫 workflow_dispatch（見 README），這裡只當備援。
+    - cron: '0,30 * * * *'
+  workflow_dispatch:          # 外部定時觸發／在 Actions 頁面手動執行
+    inputs:
+      force:
+        description: '這個時段已更新過也強制重抓'
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths: ['eorzea-stock-exchange/**', '.github/workflows/aex-snapshot.yml']
@@ -31,14 +38,18 @@ jobs:
           git fetch --depth=1 origin aex-data && git show origin/aex-data:snapshot.json > prev.json || echo '{}' > prev.json
 
       - name: 抓取 Universalis 並整理行情
+        # 排程與外部觸發：同一個半小時時段已更新過就跳過（避免重複打 Universalis）；推送程式碼或勾選 force 時一定重抓
+        env:
+          SKIP_IF_FRESH: ${{ (github.event_name == 'push' || inputs.force) && '0' || '1' }}
         run: python eorzea-stock-exchange/build_snapshot.py prev.json out
 
       - name: 發布到 aex-data 分支（只保留最新一份，不累積歷史）
+        if: hashFiles('out/snapshot.json') != ''
         run: |
           cd out
           git init -q -b aex-data
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-          git add snapshot.json
+          git add snapshot.json meta.json
           git commit -qm "行情資料 $(date -u +%Y-%m-%dT%H:%MZ)"
           git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" aex-data

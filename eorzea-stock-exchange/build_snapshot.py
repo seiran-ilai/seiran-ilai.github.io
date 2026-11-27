@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """艾奧傑亞證券交易所：在 GitHub Actions 預先抓取 Universalis 資料，輸出 snapshot.json。
 用法：python build_snapshot.py <上一份 snapshot.json> <輸出資料夾>
+環境變數 SKIP_IF_FRESH=1：上一份已是這個半小時時段（00、30 分）產生的就跳過，不重複打 Universalis
+（外部定時觸發與延誤的 GitHub 排程可能在同一時段各跑一次）。
+輸出 snapshot.json（完整行情）與 meta.json（只有時間，讓網頁先用小檔判斷要不要下載完整行情）。
 只用 Python 標準函式庫。"""
 import json, os, re, sys, time, urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -11,6 +14,7 @@ DC = '陸行鳥'
 WORLDS = {4028: '伊弗利特', 4029: '迦樓羅', 4030: '利維坦', 4031: '鳳凰', 4032: '奧汀', 4033: '巴哈姆特', 4035: '泰坦'}
 CLOSED = {4034}  # 拉姆：已關閉
 DAY = 86400
+SLOT = 1800  # 更新週期：每 30 分鐘
 PER_SECTOR = 30
 EXT = 3
 R = lambda a, b: list(range(a, b + 1))
@@ -93,8 +97,8 @@ def clean(es):
 
 
 def load_items():
-    html = open(os.path.join(HERE, 'index.html'), encoding='utf-8').read()
-    m = re.search(r'<script id="items-data" type="text/plain">(.*?)</script>', html, re.S)
+    src = open(os.path.join(HERE, 'js', 'items.js'), encoding='utf-8').read()
+    m = re.search(r'ITEMS_TSV=`(.*?)`', src, re.S)
     items = {}
     for line in m.group(1).strip().split('\n'):
         f = line.split('\t')
@@ -111,6 +115,9 @@ def main():
         prev = json.load(open(prev_path, encoding='utf-8'))
     except Exception:
         prev = {}
+    if os.environ.get('SKIP_IF_FRESH') == '1' and prev.get('t', 0) // 1000 // SLOT == now // SLOT:
+        print('這個時段已經更新過，跳過')
+        return
 
     # 1. 成分股：24 小時內沿用上一份，否則重新掃描
     cons = prev.get('cons')
@@ -199,6 +206,8 @@ def main():
     path = os.path.join(out_dir, 'snapshot.json')
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(snap, f, ensure_ascii=False, separators=(',', ':'))
+    with open(os.path.join(out_dir, 'meta.json'), 'w', encoding='utf-8') as f:
+        json.dump({'v': 1, 't': snap['t']}, f, separators=(',', ':'))
     print(f'完成：{len(hist)} 檔、{sum(len(h["e"]) for h in hist.values())} 筆成交、{calls} 次請求、{os.path.getsize(path) / 1e6:.2f} MB')
 
 
